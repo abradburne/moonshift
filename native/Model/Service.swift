@@ -8,12 +8,17 @@ struct ServiceError: LocalizedError {
 }
 
 /// The loopback service that runs the models: its process and its HTTP API.
-/// It lives in the project folder, next to the models and the saved covers.
 @MainActor final class Service {
     /// Must match `API_VERSION` in `studio/server.py`.
     static let apiVersion = 2
 
-    let root: URL
+    /// Models, environments and covers. A build made for a checkout uses that
+    /// folder; the packaged app uses its Application Support folder.
+    private(set) var root: URL
+    /// The service's Python package and the setup scripts.
+    let code: URL
+    /// True for the self-contained app, which carries its own service, engine and uv.
+    let isPackaged: Bool
     let port: Int
     private let clientID = UUID().uuidString
     private var process: Process?
@@ -27,8 +32,31 @@ struct ServiceError: LocalizedError {
 
     init() {
         let info = Bundle.main.infoDictionary ?? [:]
-        root = URL(fileURLWithPath: info["StudioRoot"] as? String ?? FileManager.default.currentDirectoryPath)
+        if let checkout = info["StudioRoot"] as? String {
+            root = URL(fileURLWithPath: checkout)
+            code = root
+            isPackaged = false
+        } else {
+            root = UserDefaults.standard.string(forKey: Self.libraryKey).map { URL(fileURLWithPath: $0) } ?? Self.defaultLibrary
+            code = Bundle.main.resourceURL ?? Bundle.main.bundleURL
+            isPackaged = true
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        }
         port = info["StudioPort"] as? Int ?? 8766
+    }
+
+    private static let libraryKey = "LibraryFolder"
+    static var defaultLibrary: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Moonshift")
+    }
+    /// Tools shipped inside the packaged app: the music engine and uv.
+    var helpers: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers") }
+
+    /// Keeps models and covers somewhere else. Only before anything is installed.
+    func relocate(to folder: URL) {
+        guard isPackaged, process == nil else { return }
+        root = folder
+        UserDefaults.standard.set(folder.path, forKey: Self.libraryKey)
     }
 
     var data: URL { root.appendingPathComponent("data") }
@@ -103,7 +131,9 @@ struct ServiceError: LocalizedError {
     // MARK: Lifecycle
 
     private func health() async -> Health? {
-        guard let health: Health = try? await get("health", timeout: 2), health.root == root.path else { return nil }
+        // The service reports its folder with symlinks resolved; compare like with like.
+        func resolved(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().path }
+        guard let health: Health = try? await get("health", timeout: 2), resolved(health.root) == resolved(root.path) else { return nil }
         return health
     }
 
@@ -130,8 +160,11 @@ struct ServiceError: LocalizedError {
         let process = Process()
         process.executableURL = python
         process.arguments = ["-m", "uvicorn", "studio.server:app", "--host", "127.0.0.1", "--port", String(port), "--log-level", "warning"]
-        process.currentDirectoryURL = root
+        process.currentDirectoryURL = code
         var environment = ProcessInfo.processInfo.environment
+        environment["MOONSHIFT_HOME"] = root.path
+        // Nothing is written beside the code: inside the app it is sealed by the signature.
+        if code != root { environment["PYTHONDONTWRITEBYTECODE"] = "1" }
         environment["HF_HOME"] = root.appendingPathComponent(".cache/huggingface").path
         environment["XDG_CACHE_HOME"] = root.appendingPathComponent(".cache").path
         environment["PYTHONUNBUFFERED"] = "1"

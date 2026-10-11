@@ -4,6 +4,8 @@ import SwiftUI
 struct SidebarView: View {
     @Bindable var studio: Studio
     @State private var deleting: Project?
+    @State private var renaming: Project?
+    @State private var newName = ""
 
     private var selection: Binding<String?> {
         Binding(get: { studio.project.id.isEmpty ? Self.draft : studio.project.id }, set: { id in
@@ -24,6 +26,10 @@ struct SidebarView: View {
                     CoverRow(studio: studio, project: project)
                         .tag(saved.id)
                         .contextMenu {
+                            Button("Rename…", systemImage: "pencil") {
+                                newName = project.title
+                                renaming = project
+                            }
                             Button("Duplicate", systemImage: "plus.square.on.square") { Task { await studio.duplicate(project) } }
                             Divider()
                             Button("Delete…", systemImage: "trash", role: .destructive) { deleting = project }
@@ -35,6 +41,11 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) {
             if let job = studio.runningJob, job.request.project.id != studio.project.id { BackgroundJobRow(studio: studio, job: job) }
+        }
+        .alert("Rename Cover", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { project in
+            TextField("Name", text: $newName)
+            Button("Rename") { Task { await studio.rename(project, to: newName) } }
+            Button("Cancel", role: .cancel) {}
         }
         .confirmationDialog("Delete “\(deleting?.title ?? "")”?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { project in
             Button("Delete Cover", role: .destructive) { Task { await studio.delete(project) } }

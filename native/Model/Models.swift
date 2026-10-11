@@ -18,6 +18,8 @@ struct Project: Codable, Identifiable, Equatable {
     var max_tokens = CoverLength.balanced.rawValue
     var ode_steps = 32
     var takes = 1
+    /// Speed relative to the reference song: 1 keeps its tempo.
+    var tempo = 1.0
     var engine: String? = nil
     var nar_chunk_frames: Int? = 0
     var cover_source = ""
@@ -44,7 +46,7 @@ struct Project: Codable, Identifiable, Equatable {
         vocal_prompt = value(.vocal_prompt, base.vocal_prompt); language = value(.language, base.language)
         cot = value(.cot, "full"); seed = value(.seed, base.seed); cfg_scale = value(.cfg_scale, base.cfg_scale)
         temperature = value(.temperature, base.temperature); max_tokens = value(.max_tokens, 9000)
-        ode_steps = value(.ode_steps, base.ode_steps); takes = value(.takes, base.takes)
+        ode_steps = value(.ode_steps, base.ode_steps); takes = value(.takes, base.takes); tempo = value(.tempo, 1.0)
         engine = try? c.decodeIfPresent(String.self, forKey: .engine)
         nar_chunk_frames = try? c.decodeIfPresent(Int.self, forKey: .nar_chunk_frames)
         cover_source = value(.cover_source, ""); cover_name = value(.cover_name, ""); cover_job = value(.cover_job, "")
@@ -59,6 +61,11 @@ struct Project: Codable, Identifiable, Equatable {
     var hasContent: Bool { hasSong || hasWords || title != Project.untitled }
     var quality: Quality { Quality(rawValue: engine ?? "") ?? .standard }
     var keepsHarmony: Bool { cot == "full" }
+    /// "Original tempo", "15% slower", "10% faster".
+    var tempoLabel: String {
+        let percent = Int((abs(tempo - 1) * 100).rounded())
+        return percent == 0 ? "Original tempo" : "\(percent)% \(tempo < 1 ? "slower" : "faster")"
+    }
     /// The song's name where known, otherwise the imported file's.
     var songLabel: String {
         if !song_title.isEmpty { return song_artist.isEmpty ? song_title : "\(song_title) · \(song_artist)" }

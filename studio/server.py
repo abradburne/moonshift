@@ -22,11 +22,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from .models import JobRequest, Project
+from .paths import CODE, HOME
 from .resources import estimate, memory_snapshot, process_tree_footprint, stop_process_group, installed, covers_installed
 
 # Bump when the native client needs a newer service than one already running.
 API_VERSION = 2
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = HOME
 DATA = ROOT / "data"
 for name in ("projects", "jobs", "imports", "exports"):
     (DATA / name).mkdir(parents=True, exist_ok=True)
@@ -233,11 +234,12 @@ def worker_loop():
                            XDG_CACHE_HOME=str(ROOT / ".cache"), TORCH_HOME=str(ROOT / ".cache/torch"),
                            TMPDIR=str(ROOT / ".cache/tmp"), HF_HUB_OFFLINE="1", HF_MODULES_CACHE=str(ROOT / ".cache/huggingface/modules"),
                            TOKENIZERS_PARALLELISM="false")
-                env["PATH"] = os.pathsep.join(["/opt/homebrew/bin", "/usr/local/bin", env.get("PATH", "")])
+                # The transcription model looks for FFmpeg on the PATH; setup installs one here.
+                env["PATH"] = os.pathsep.join([str(ROOT / ".runtime/bin"), "/opt/homebrew/bin", "/usr/local/bin", env.get("PATH", "")])
                 Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
                 update_job(job_id, status="running", stage="Loading engine", started_at=now())
                 proc = subprocess.Popen([str(python), "-m", "studio.worker", str(job_path(job_id))],
-                                        cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                        cwd=CODE, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                         text=True, start_new_session=True)
                 PROCESSES[job_id] = proc
             monitor = threading.Thread(target=monitor_worker, args=(job_id, proc, limit, stopped, heartbeat if kind == "generate" else None), daemon=True)
@@ -533,8 +535,8 @@ def create_job(request: JobRequest):
         prior = read_job(request.resume_from)
         if not (job_path(request.resume_from) / "take-1/semantic-prefix.json").is_file():
             raise HTTPException(409, "This job has no saved song to resume.")
-        for field in ("lyrics", "style", "abc", "cot", "language", "vocal_prompt", "seed", "cfg_scale", "temperature"):
-            if prior["request"]["project"].get(field) != getattr(request.project, field):
+        for field in ("lyrics", "style", "abc", "tempo", "cot", "language", "vocal_prompt", "seed", "cfg_scale", "temperature"):
+            if prior["request"]["project"].get(field, Project.model_fields[field].default) != getattr(request.project, field):
                 raise HTTPException(409, "Resume preserves the saved song. Keep lyrics, style, score, voice, seed, and sampling unchanged.")
     forecast = queued_estimate(request.project.model_dump(), request.kind)
     if not forecast["allowed"]:

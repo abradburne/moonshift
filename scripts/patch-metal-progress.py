@@ -2,9 +2,11 @@
 
 The log keys keep the `moonwire.` prefix: Moonwire shares this runtime checkout.
 """
+import os
 from pathlib import Path
 
-source = Path(__file__).resolve().parent.parent / ".runtime/audio.cpp/src/models/yue2/ar_runtime.cpp"
+home = Path(os.environ.get("MOONSHIFT_HOME") or Path(__file__).resolve().parent.parent)
+source = home / ".runtime/audio.cpp/src/models/yue2/ar_runtime.cpp"
 text = source.read_text()
 if "moonwire.progress.semantic" not in text:
     old = "            emitted.push_back(token);\n"

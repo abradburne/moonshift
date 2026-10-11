@@ -28,11 +28,11 @@ import Observation
         case lookup
     }
 
+    /// What a checkout needs to build the music engine. The packaged app needs nothing.
     private(set) var tools: [Tool] = [
         Tool(id: "clang", name: "Xcode Command Line Tools", purpose: "Builds the music engine for your Mac", formula: nil),
         Tool(id: "uv", name: "uv", purpose: "Sets up the private Python runtimes", formula: "uv"),
-        Tool(id: "cmake", name: "CMake", purpose: "Builds the music engine", formula: "cmake"),
-        Tool(id: "ffmpeg", name: "FFmpeg", purpose: "Reads your recordings", formula: "ffmpeg")
+        Tool(id: "cmake", name: "CMake", purpose: "Builds the music engine", formula: "cmake")
     ]
     private(set) var steps: [Step] = []
     private(set) var running = false
@@ -41,15 +41,22 @@ import Observation
     private(set) var homebrew: String?
     private(set) var freeSpace: Int64?
 
-    @ObservationIgnored private let root: URL
+    /// Where everything is installed.
+    var root: URL { didSet { checkTools() } }
+    @ObservationIgnored private let scripts: URL
+    /// Bundled tools, when this is the packaged app.
+    @ObservationIgnored private let helpers: URL?
     @ObservationIgnored private var process: Process?
     @ObservationIgnored private var pending = Data()
     @ObservationIgnored private var lines: [String] = []
     @ObservationIgnored private var watcher: Task<Void, Never>?
     @ObservationIgnored private var cancelled = false
 
-    init(root: URL) {
+    init(root: URL, scripts: URL, helpers: URL?) {
         self.root = root
+        self.scripts = scripts
+        self.helpers = helpers
+        if helpers != nil { tools = [] }
         checkTools()
     }
 
@@ -82,15 +89,16 @@ import Observation
                 ? manager.fileExists(atPath: "/Library/Developer/CommandLineTools/usr/bin/clang") || manager.fileExists(atPath: "/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild")
                 : find(tools[index].id) != nil
         }
+        try? manager.createDirectory(at: root, withIntermediateDirectories: true)
         freeSpace = (try? root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
     }
 
     private func plan(_ plan: Plan, installingTools: Bool) -> [Step] {
         let lookup = Step(id: "lookup", title: "Song identification", detail: "A small helper for optional online lookup")
         guard case .engines(let quality) = plan else { return [lookup] }
-        return (installingTools ? [Step(id: "tools", title: "Developer tools", detail: "Installs \(installableTools.map(\.name).joined(separator: ", ")) with Homebrew")] : []) + [
-            Step(id: "service", title: "App service", detail: "A private Python runtime for the local engine"),
-            Step(id: "engine", title: "Music engine", detail: "Compiled for your Mac's GPU · takes a few minutes"),
+        let tools = installingTools ? [Step(id: "tools", title: "Developer tools", detail: "Installs \(installableTools.map(\.name).joined(separator: ", ")) with Homebrew")] : []
+        let engine = helpers == nil ? [Step(id: "engine", title: "Music engine", detail: "Compiled for your Mac's GPU · takes a few minutes")] : []
+        return tools + [Step(id: "service", title: "App service", detail: "A private Python runtime for the local engine")] + engine + [
             Step(id: "music", title: "Music model", detail: "YuE2 \(quality.bits) · \(Self.musicBytes(quality).formatted(.byteCount(style: .file)))"),
             Step(id: "transcriber-runtime", title: "Transcription runtime", detail: "PyTorch, in its own environment"),
             Step(id: "transcriber", title: "Transcription models", detail: "SheetSage2 and MERT · \(Self.transcriptionBytes.formatted(.byteCount(style: .file)))"),
@@ -113,13 +121,18 @@ import Observation
         case .engines(let quality): argument = quality.setupArgument
         case .lookup: argument = "lookup"
         }
-        var script = root.appendingPathComponent("scripts/setup-moonshift.sh").path
+        var script = scripts.appendingPathComponent("setup-moonshift.sh").path
         #if SNAPSHOT
         script = ProcessInfo.processInfo.environment["MOONSHIFT_SETUP_SCRIPT"] ?? script
         #endif
         process.arguments = [script, argument]
         process.currentDirectoryURL = root
         var environment = ProcessInfo.processInfo.environment
+        environment["MOONSHIFT_HOME"] = root.path
+        if let helpers {
+            environment["MOONSHIFT_PACKAGED"] = "1"
+            environment["MOONSHIFT_UV"] = helpers.appendingPathComponent("uv").path
+        }
         environment["PATH"] = (Self.searchPath + [environment["PATH"] ?? ""]).joined(separator: ":")
         if withTools { environment["MOONSHIFT_INSTALL_TOOLS"] = installableTools.compactMap(\.formula).joined(separator: " ") }
         // Progress bars redraw in place; plain output keeps the log readable.

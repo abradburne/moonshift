@@ -3,7 +3,6 @@ import SwiftUI
 /// First launch: what Moonshift does, then one button to fetch what it needs.
 struct OnboardingView: View {
     @Bindable var studio: Studio
-    @State private var quality = Quality.preferred
     private var settingUp: Bool { studio.onboardingSetup }
 
     var body: some View {
@@ -13,7 +12,7 @@ struct OnboardingView: View {
                 if settingUp {
                     VStack(alignment: .leading, spacing: 20) {
                         Text("Install the local models").font(.system(size: 28, weight: .bold, design: .rounded))
-                        SetupPanel(studio: studio, plan: .engines(quality), quality: $quality, doneTitle: "Start Your First Cover") { studio.finishOnboarding() }
+                        SetupPanel(studio: studio, plan: .engines(.preferred), quality: nil, doneTitle: "Start Your First Cover") { studio.finishOnboarding() }
                     }
                 } else {
                     welcome
@@ -171,11 +170,12 @@ struct SetupPanel: View {
                         }
                     }
                 }
+                if studio.service.isPackaged, studio.phase == .needsSetup { location }
                 if !installer.missingTools.isEmpty { requirements }
             }
             HStack(spacing: 12) {
                 if let free = installer.freeSpace, plan != .lookup {
-                    let needed = Installer.downloadSize(quality?.wrappedValue ?? .standard)
+                    let needed = Installer.downloadSize(chosenQuality)
                     if free < needed + 2_000_000_000 {
                         Callout(text: "Only \(free.formatted(.byteCount(style: .file))) is free on this disk.")
                     } else {
@@ -183,12 +183,32 @@ struct SetupPanel: View {
                     }
                 }
                 Spacer()
-                Button(plan == .lookup ? "Install" : "Download and Install") { begin() }
+                Button(plan == .lookup ? "Install" : "Download \(Installer.downloadLabel(chosenQuality).replacingOccurrences(of: "about ", with: ""))") { begin() }
                     .buttonStyle(.primaryLarge)
                     .disabled(!canBegin)
                     .keyboardShortcut(.defaultAction)
             }
         }
+    }
+
+    private var chosenQuality: Quality {
+        if let quality { return quality.wrappedValue }
+        if case .engines(let fixed) = plan { return fixed }
+        return .standard
+    }
+
+    /// Where models and covers will be kept, with the option to put them on another disk.
+    private var location: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "externaldrive").font(.title3).foregroundStyle(.secondary).frame(width: 26)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Kept in").font(.caption).foregroundStyle(.secondary)
+                Text(installer.root.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            Button("Change…") { studio.chooseLibraryFolder() }.buttonStyle(.quiet)
+        }
+        .card(padding: 14)
     }
 
     /// Setup can start when nothing is missing, or Homebrew can supply what is.

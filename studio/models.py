@@ -22,6 +22,8 @@ class Project(BaseModel):
     max_tokens: int = Field(default=9000, ge=32, le=16000)
     ode_steps: int = Field(default=32, ge=4, le=64)
     takes: int = Field(default=1, ge=1, le=8)
+    # Speed of the cover relative to the reference song's transcribed tempo.
+    tempo: float = Field(default=1.0, ge=0.5, le=1.5)
     engine: Literal["auto", "metal-q8", "metal-q4"] | None = None
     nar_chunk_frames: Literal[0, 512, 1024, 2048, 4096] | None = None
     cover_source: str = ""

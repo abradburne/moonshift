@@ -124,3 +124,28 @@ def test_deleting_a_cover_removes_its_takes_and_unshared_recording(client, tmp_p
     client.post(f"/api/jobs/{other['id']}/cancel")
     assert client.delete(f"/api/jobs/{other['id']}").status_code == 200
     assert client.get("/api/state").json()["jobs"] == []
+
+
+def test_library_folder_reached_through_a_symlink_is_resolved(tmp_path):
+    # Takes are saved relative to the library; a symlinked path must not break that.
+    import subprocess, sys
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "link").symlink_to(real)
+    code = "from studio.paths import HOME; print(HOME)"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=server.CODE,
+                         env={"MOONSHIFT_HOME": str(tmp_path / "link"), "PATH": "/usr/bin:/bin"}, check=True).stdout.strip()
+    assert out == str(real.resolve())
+
+
+def test_tempo_scales_the_score_marks_and_leaves_the_notes():
+    from studio.worker import retime
+    score = "X:1\nM:4/4\nL:1/16\nQ:1/4=125\nK:F\nV: Vocal\nz6c2c2d2a2f2|\n"
+    assert retime(score, 1.0) == score
+    assert retime(score, 0.8) == score.replace("Q:1/4=125", "Q:1/4=100")
+    assert retime("Q:120\nCDEF|", 1.25) == "Q:150\nCDEF|"
+    # Extreme requests stay within what a score can sensibly ask for.
+    assert "Q:1/4=30" in retime("Q:1/4=40\nCDEF|", 0.5)
+    assert Project(tempo=0.8).tempo == 0.8 and Project.model_validate({"title": "Older cover"}).tempo == 1.0
+    with pytest.raises(ValueError):
+        Project(tempo=3)

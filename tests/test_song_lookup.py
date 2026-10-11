@@ -28,19 +28,40 @@ def test_empty_and_oversized_lyrics_are_rejected():
 
 
 def test_metadata_is_local_and_falls_back_to_filename(monkeypatch, tmp_path):
-    monkeypatch.setattr(song_lookup.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess([], 0, json.dumps({"format": {"duration": "123.5", "tags": {"TITLE": "Tagged song", "ARTIST": "Tagged artist"}}})))
+    monkeypatch.setattr(song_lookup, "probe", lambda path: (123.5, {"title": "Tagged song", "artist": "Tagged artist"}))
     result = song_lookup.audio_metadata(tmp_path / "song.wav", "File title")
     assert result == {"title": "Tagged song", "artist": "Tagged artist", "duration": 123.5, "method": "tags"}
-    monkeypatch.setattr(song_lookup.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess([], 0, '{"format":{"duration":"120"}}'))
+    monkeypatch.setattr(song_lookup, "probe", lambda path: (120.0, {}))
     result = song_lookup.audio_metadata(tmp_path / "song.wav", "01 Artist - Song.mp3")
     assert result["title"] == "Song" and result["artist"] == "Artist" and result["method"] == "filename"
 
 
 def test_metadata_refuses_nonfinite_and_long_audio(monkeypatch, tmp_path):
-    for duration in ["nan", "inf", "901", "0"]:
-        monkeypatch.setattr(song_lookup.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess([], 0, json.dumps({"format": {"duration": duration}})))
+    for duration in [float("nan"), float("inf"), 901.0, 0.0]:
+        monkeypatch.setattr(song_lookup, "probe", lambda path: (duration, {}))
         with pytest.raises(ValueError):
             song_lookup.audio_metadata(tmp_path / "song.wav", "song")
+
+
+def test_ffmpeg_summary_gives_duration_and_file_tags_only():
+    from studio.audio import describe
+    summary = """Input #0, mp3, from 'song.mp3':
+  Metadata:
+    title           : Come Home
+    ARTIST          : The Singer: Live
+    album           : Late
+  Duration: 00:04:11.05, start: 0.025057, bitrate: 226 kb/s
+  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 226 kb/s
+      Metadata:
+        encoder         : Lavc
+    title           : Not a file tag
+At least one output file must be specified
+"""
+    duration, tags = describe(summary)
+    assert duration == pytest.approx(251.05)
+    assert tags == {"title": "Come Home", "artist": "The Singer: Live", "album": "Late"}
+    with pytest.raises(ValueError):
+        describe("song.txt: Invalid data found when processing input")
 
 
 def test_lookup_rank_and_payload_never_send_audio(monkeypatch):

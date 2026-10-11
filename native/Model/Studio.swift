@@ -68,7 +68,7 @@ import Observation
     init() {
         Self.adoptEarlierSettings()
         presets = PresetStore()
-        installer = Installer(root: service.root)
+        installer = Installer(root: service.root, scripts: service.code.appendingPathComponent("scripts"), helpers: service.isPackaged ? service.helpers : nil)
         onlineLookup = UserDefaults.standard.bool(forKey: "CoverOnlineLookup")
         let fresh = newProject()
         saved = fresh
@@ -174,6 +174,29 @@ import Observation
         showsOnboarding = false
         onboardingSetup = false
         installer.reset()
+    }
+
+    /// Lets the user keep models and covers on another disk, before anything is installed.
+    func chooseLibraryFolder() {
+        guard service.isPackaged, phase == .needsSetup, !installer.running else { return }
+        let panel = NSOpenPanel()
+        panel.message = "Choose where Moonshift keeps its models and your covers. It makes a Moonshift folder there."
+        panel.prompt = "Choose"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let parent = panel.url else { return }
+        let folder = parent.lastPathComponent == "Moonshift" ? parent : parent.appendingPathComponent("Moonshift")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        } catch {
+            report(error, title: "Moonshift cannot use that folder")
+            return
+        }
+        // The panel's grant covers this launch; the bookmark covers later ones.
+        rememberFolder(folder)
+        service.relocate(to: folder)
+        installer.root = folder
     }
 
     /// Setup finished: start the service if this was the first install, and see what is now available.
@@ -402,6 +425,24 @@ import Observation
         load(newProject())
     }
 
+    func rename(_ target: Project, to title: String) async {
+        let title = String(title.trimmed.prefix(160))
+        guard !title.isEmpty, title != target.title else { return }
+        if target.id == project.id {
+            project.title = title
+            await save()
+            return
+        }
+        var renamed = target
+        renamed.title = title
+        do {
+            let stored: Project = try await service.post("projects", renamed)
+            if let index = projects.firstIndex(where: { $0.id == stored.id }) { projects[index] = stored }
+        } catch {
+            report(error, title: "This cover could not be renamed")
+        }
+    }
+
     /// The same song and words, ready for a different sound.
     func duplicate(_ source: Project) async {
         guard await save() else { return }
@@ -537,7 +578,7 @@ import Observation
     func reuseSettings(of job: Job) {
         let source = job.request.project
         project.style = source.style; project.voice = source.voice; project.vocal_prompt = source.vocal_prompt
-        project.cover_preset = source.cover_preset; project.cot = source.cot; project.language = source.language
+        project.cover_preset = source.cover_preset; project.cot = source.cot; project.language = source.language; project.tempo = source.tempo
         step = .style
     }
 

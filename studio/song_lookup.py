@@ -5,7 +5,6 @@ in a small environment; only the explicit identify endpoint invokes it.
 """
 import html
 import json
-import math
 from pathlib import Path
 import re
 import subprocess
@@ -13,6 +12,9 @@ import tempfile
 import unicodedata
 
 import httpx
+
+from .audio import duration_within_limit, ffmpeg, probe
+from .paths import CODE
 
 
 def lookup_installed(root):
@@ -59,15 +61,9 @@ def parse_lyrics(text, extension=".txt"):
 
 
 def audio_metadata(path, name):
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration:format_tags=title,artist,album", "-of", "json", str(path)],
-        capture_output=True, text=True, timeout=20, check=True,
-    )
-    info = json.loads(probe.stdout).get("format", {})
-    duration = float(info.get("duration", 0))
-    if not math.isfinite(duration) or not 0 < duration <= 900:
+    duration, tags = probe(path)
+    if not duration_within_limit(duration):
         raise ValueError("Choose an audio file up to 15 minutes long.")
-    tags = {k.lower(): str(v) for k, v in info.get("tags", {}).items()}
     title = tags.get("title", "")
     artist = tags.get("artist", "")
     if not title:
@@ -89,10 +85,10 @@ def recognize(path, root):
     # Decode a bounded excerpt locally, avoiding loading a whole long file in RAM.
     with tempfile.TemporaryDirectory(dir=root / ".cache/tmp", prefix="identify-") as directory:
         excerpt = Path(directory) / "excerpt.wav"
-        subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-t", "24", "-ac", "1", "-ar", "16000", str(excerpt)],
+        subprocess.run([ffmpeg(), "-v", "error", "-nostdin", "-i", str(path), "-t", "24", "-ac", "1", "-ar", "16000", str(excerpt)],
                        check=True, capture_output=True, timeout=20)
         process = subprocess.run([str(python), "-m", "studio.recognize", str(excerpt)],
-                                 cwd=root, capture_output=True, text=True, timeout=35)
+                                 cwd=CODE, capture_output=True, text=True, timeout=35)
         if process.returncode:
             return {"title": "", "artist": "", "note": "Online identification is unavailable. Check the song details and search for lyrics, or import a lyric file."}
         return json.loads(process.stdout)

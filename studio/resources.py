@@ -14,8 +14,11 @@ import sys
 import psutil
 
 GIB = 1024 ** 3
-ROOT = Path(__file__).resolve().parent.parent
-METAL_CLI = ROOT / ".runtime/audio.cpp/build/macos-metal-release/bin/audiocpp_cli"
+from .paths import CODE, HOME as ROOT
+# The packaged app ships the music engine prebuilt; a checkout builds its own.
+METAL_CLI = CODE.parent / "Helpers/audiocpp_cli"
+if not METAL_CLI.is_file():
+    METAL_CLI = ROOT / ".runtime/audio.cpp/build/macos-metal-release/bin/audiocpp_cli"
 GGUF = ROOT / ".models/YuE2-GGUF"
 
 

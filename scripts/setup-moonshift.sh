@@ -7,8 +7,8 @@
 #                                        q8: 8-bit music model
 #                                        lookup: only optional song identification
 set -euo pipefail
-cd "${0:A:h:h}"
-source scripts/setup-common.sh
+scripts="${0:A:h}"
+source "$scripts/setup-common.sh"
 precision=${1:-q4}
 case "$precision" in q4|q8|lookup) ;; *) print 'Usage: setup-moonshift.sh [q4|q8|lookup]'; exit 1;; esac
 
@@ -21,14 +21,11 @@ fi
 need uv 'uv is missing. Install it with: brew install uv'
 
 if [[ "$precision" != lookup ]]; then
-  need ffmpeg 'FFmpeg is missing. Install it with: brew install ffmpeg'
-  need cmake 'CMake is missing. Install it with: brew install cmake'
-  need git "Apple's developer tools are missing. Install them with: xcode-select --install"
   step service
   [[ -x .venv/bin/python ]] || uv venv --python 3.12 .venv
   uv pip install --python .venv/bin/python fastapi==0.143.0 uvicorn==0.54.0 httpx==0.28.1 psutil==7.2.2 numpy==2.2.6 soundfile==0.13.1
-  ./scripts/setup-metal.sh "$precision"
-  ./scripts/setup-covers.sh
+  "$scripts/setup-metal.sh" "$precision"
+  "$scripts/setup-covers.sh"
 fi
 
 step lookup

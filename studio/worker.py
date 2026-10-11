@@ -8,7 +8,7 @@ import sys
 import time
 import traceback
 
-ROOT = Path(__file__).resolve().parent.parent
+from .paths import HOME as ROOT
 DATA = ROOT / "data"
 
 
@@ -42,6 +42,13 @@ def waveform(audio, bins=300):
     import numpy as np
     mono = np.max(np.abs(audio), axis=1) if audio.ndim == 2 else np.abs(audio)
     return [float(np.max(chunk)) if len(chunk) else 0.0 for chunk in np.array_split(mono, bins)]
+
+
+def retime(abc, scale):
+    """The score at another speed: its tempo marks scaled, its notes untouched."""
+    if abs(scale - 1) < .005:
+        return abc
+    return re.sub(r"(?m)^(Q:\s*(?:\d+/\d+\s*=\s*)?)(\d+)", lambda mark: mark[1] + str(max(30, min(300, round(int(mark[2]) * scale)))), abc)
 
 
 def semantic_artifact(path):
@@ -114,7 +121,7 @@ def music(request, directory):
             options["nar_chunk_frames"] = p.get("nar_chunk_frames") or 1024
         score = out / "score.abc"
         if p["abc"].strip():
-            score.write_text(p["abc"])
+            score.write_text(retime(p["abc"], p.get("tempo") or 1))
             options["abc_file"] = str(score)
         if request.get("resume_from"):
             source = DATA / "jobs" / request["resume_from"] / "take-1"

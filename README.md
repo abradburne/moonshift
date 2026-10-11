@@ -6,8 +6,14 @@ you choose. Transcription and music generation run on your Mac.
 
 ## Open it
 
-Double-click **[Moonshift.command](Moonshift.command)**, or open `build/Moonshift.app`.
-The first launch walks through installing the local models (about 7 GB).
+Download **Moonshift** from the [latest release](https://github.com/abradburne/moonshift/releases/latest),
+open the disk image and drag it to Applications. It needs Apple Silicon and
+macOS 14 or later, and nothing else installed. The first launch downloads the
+local models (about 7 GB) with one click. Models and covers are kept in
+`~/Library/Application Support/Moonshift`, or a folder you choose at that point.
+
+From a checkout, double-click **[Moonshift.command](Moonshift.command)** instead;
+that build keeps everything in the checkout folder.
 
 1. **Song.** Drop in WAV, FLAC, MP3, AIFF or M4A audio, up to 15 minutes or
    512 MB. Paste the lyrics, import a TXT, SRT, LRC or WebVTT file, or use
@@ -48,8 +54,9 @@ Requires Apple Silicon, macOS 14 or later, and Xcode 26 or later (for the Icon
 Composer icon).
 
 ```sh
-./scripts/build-moonshift.sh              # build/Moonshift.app
-./scripts/build-moonshift.sh --notarize   # Developer ID signed and notarized
+./scripts/build-moonshift.sh              # build/Moonshift.app, for this checkout
+./scripts/build-moonshift.sh --notarize   # the same, notarized
+./scripts/build-moonshift.sh --release    # self-contained, notarized, as a .dmg
 .venv/bin/python -m pytest -q tests       # service tests
 ```
 
@@ -64,14 +71,17 @@ ID certificate in your keychain. Set `MOONSHIFT_SIGN_IDENTITY` and
 `MOONSHIFT_ASC_PROFILE` to your own; the script then signs, submits, staples
 the ticket and runs a Gatekeeper check.
 
-The app is built for the folder it lives in: its service, models and covers
-stay here, so a notarized build still expects this folder at the same path.
+A checkout build is tied to its folder: the service, models and covers stay
+there. A release build can run from anywhere: it carries the service, the setup
+scripts, uv and the compiled music engine inside the app, and is written to
+`build/release/`.
 
 ## Setup without the app
 
-The app's setup screen runs the same script, checks for the tools it needs
-(uv, CMake, FFmpeg and Apple's command line tools), and offers to install
-missing ones with Homebrew.
+From a checkout, setup also builds the music engine, so it needs uv, CMake and
+Apple's command line tools. The app's setup screen checks for them and offers
+to install missing ones with Homebrew. (The release app ships that engine
+prebuilt and needs none of these.)
 
 ```sh
 ./scripts/setup-moonshift.sh          # 4-bit music model, transcription, lookup helper

@@ -58,6 +58,18 @@ struct CreateStep: View {
                     }
                 }
                 GridRow {
+                    Text("Tempo").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "tortoise.fill").font(.caption).foregroundStyle(.secondary)
+                            Slider(value: $studio.project.tempo, in: 0.7...1.3, step: 0.05).frame(width: 220).accessibilityLabel("Tempo")
+                            Image(systemName: "hare.fill").font(.caption).foregroundStyle(.secondary)
+                            if studio.project.tempo != 1 { Button("Reset") { studio.project.tempo = 1 }.buttonStyle(.plain).font(.caption).foregroundStyle(Theme.accent) }
+                        }
+                        Text(tempoNote).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                GridRow {
                     Text("Quality").foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 6) {
                         Picker("Quality", selection: Binding(get: { studio.project.quality }, set: { studio.project.engine = $0.rawValue })) {
@@ -94,10 +106,25 @@ struct CreateStep: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The tempo heard in the original, once it has been transcribed.
+    private var originalBPM: Double? {
+        guard let score = studio.transcription(of: studio.project.cover_source)?.result.abc,
+              let mark = score.firstMatch(of: #/(?m)^Q:\s*(?:\d+/\d+\s*=\s*)?(\d+)/#) else { return nil }
+        return Double(mark.1)
+    }
+
+    private var tempoNote: String {
+        guard let bpm = originalBPM else { return studio.project.tempoLabel }
+        let new = Int((bpm * studio.project.tempo).rounded())
+        return studio.project.tempo == 1 ? "Original tempo · \(Int(bpm)) BPM" : "\(studio.project.tempoLabel) · \(Int(bpm)) → \(new) BPM"
+    }
+
     private var lengthNote: String {
         let limit = "Stops by " + clockText(Double(studio.project.max_tokens) / 25) + "; a shorter song ends sooner."
-        guard studio.songDuration > 0, let fit = CoverLength.fitting(studio.songDuration) else { return limit }
-        let song = "Your song is \(clockText(studio.songDuration))."
+        // A slower cover of the same song runs longer.
+        let duration = studio.songDuration / studio.project.tempo
+        guard duration > 0, let fit = CoverLength.fitting(duration) else { return limit }
+        let song = studio.project.tempo == 1 ? "Your song is \(clockText(duration))." : "At this tempo your song runs about \(clockText(duration))."
         return fit.seconds > Double(studio.project.max_tokens) / 25 ? "\(song) \(fit.name) has room for all of it." : "\(song) \(limit)"
     }
 
@@ -302,6 +329,7 @@ private struct TakeCard: View {
 
     private var facts: String {
         var parts = [clockText(track.duration), snapshot.quality.bits, snapshot.keepsHarmony ? "Melody and harmony" : "Melody"]
+        if snapshot.tempo != 1 { parts.append(snapshot.tempoLabel) }
         if let voice = Voice.named(snapshot.voice) { parts.append(voice.name) }
         if let created = job.created { parts.append(created.friendly) }
         return parts.joined(separator: " · ")

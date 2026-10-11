@@ -2,8 +2,6 @@
 import io
 import json
 from pathlib import Path
-import math
-import subprocess
 import sys
 
 
@@ -38,15 +36,14 @@ def melody_preview(midi_bytes, path):
 
 
 def transcribe(request, directory):
+    from .audio import duration_within_limit, probe
     from .worker import ROOT, DATA, event, performance_cores, relative, waveform, write
     source = (DATA / request["source"]).resolve()
     if not source.is_relative_to(DATA.resolve()) or not source.is_file():
         raise ValueError("Reference recording is missing.")
     event(stage="Checking the recording", phase="listen", progress=None)
-    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(source)],
-                           capture_output=True, text=True, timeout=30, check=True)
-    duration = float(json.loads(probe.stdout)["format"]["duration"])
-    if not math.isfinite(duration) or not 0 < duration <= 900:
+    duration, _ = probe(source)
+    if not duration_within_limit(duration):
         raise ValueError("Import a reference recording up to 15 minutes.")
     import torch
     # Import audited, pinned local source; the MERT parent is also explicitly local.
