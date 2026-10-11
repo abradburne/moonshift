@@ -1,0 +1,46 @@
+{
+  "fill" : {
+    "automatic-gradient" : "extended-srgb:0.11000,0.12500,0.29000,1.00000"
+  },
+  "groups" : [
+    {
+      "name" : "Crescent",
+      "layers" : [
+        {
+          "image-name" : "crescent.svg",
+          "name" : "crescent"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.15
+      }
+    },
+    {
+      "name" : "Wave",
+      "layers" : [
+        {
+          "image-name" : "wave.svg",
+          "name" : "wave"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.35
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.35
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}
