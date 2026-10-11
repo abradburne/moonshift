@@ -64,6 +64,9 @@ import Observation
     @ObservationIgnored private var failures = 0
     @ObservationIgnored private var activity: NSObjectProtocol?
     @ObservationIgnored private var folderAccess: URL?
+    #if SNAPSHOT
+    @ObservationIgnored private var rehearsed = false
+    #endif
 
     init() {
         Self.adoptEarlierSettings()
@@ -135,7 +138,8 @@ import Observation
     // MARK: Startup
 
     func start() async {
-        phase = .starting
+        // Coming from setup, the onboarding screen stays up while the service starts.
+        if phase != .needsSetup { phase = .starting }
         #if SNAPSHOT
         // Screenshots can be taken against a service started by hand, before
         // macOS has been asked to let this build into the folder.
@@ -144,7 +148,14 @@ import Observation
         let attached = false
         #endif
         if !attached, !(await authorizeFolder()) { phase = .needsAccess; return }
-        guard attached || service.isInstalled else {
+        #if SNAPSHOT
+        // Pretends nothing is installed on the first start, to rehearse a first run.
+        let rehearsal = ProcessInfo.processInfo.environment["MOONSHIFT_SNAPSHOT_FRESH"] != nil && !rehearsed
+        rehearsed = true
+        #else
+        let rehearsal = false
+        #endif
+        guard !rehearsal, attached || service.isInstalled else {
             showsOnboarding = true
             phase = .needsSetup
             return

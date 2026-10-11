@@ -22,10 +22,10 @@ struct RootView: View {
                         Button("Try Again") { Task { await studio.start() } }.buttonStyle(.primary)
                     }
                 }
-            case .needsSetup:
-                OnboardingView(studio: studio)
-            case .ready:
-                if studio.showsOnboarding { OnboardingView(studio: studio) } else { WorkspaceView(studio: studio) }
+            case .needsSetup, .ready:
+                // One branch for both, so onboarding stays on screen, with its
+                // progress, as a first install turns "needs setup" into "ready".
+                if studio.showsOnboarding || studio.phase == .needsSetup { OnboardingView(studio: studio) } else { WorkspaceView(studio: studio) }
             }
         }
         .frame(minWidth: 900, minHeight: 640)

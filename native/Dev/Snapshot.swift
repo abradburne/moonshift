@@ -38,6 +38,10 @@ import SwiftUI
                 await studio.duplicate(studio.project)
                 studio.project.max_tokens = CoverLength.sketch.rawValue
                 await studio.save()
+            case "firstrun":
+                // The whole first-run path: setup from "needs setup" through to the finished screen.
+                studio.onboardingSetup = true
+                if await studio.installer.install(.engines(.standard), installingTools: true) { await studio.installFinished() }
             case "workspace":
                 studio.finishOnboarding()
             case "play":

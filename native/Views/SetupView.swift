@@ -21,7 +21,7 @@ struct OnboardingView: View {
             .frame(maxWidth: 520)
             Spacer(minLength: 24)
             // Setup can wait when the app is otherwise working.
-            if studio.isReady, !studio.installer.running {
+            if studio.isReady, !studio.installer.running, !studio.installer.succeeded {
                 Button("Set Up Later") { studio.finishOnboarding() }.buttonStyle(.plain).foregroundStyle(.secondary).padding(.bottom, 22)
             }
         }
@@ -88,6 +88,8 @@ struct SetupSheet: View {
         .background(Theme.background)
         .preferredColorScheme(.dark)
         .interactiveDismissDisabled(studio.installer.running)
+        // The next time setup opens, it starts from its overview.
+        .onDisappear { studio.installer.reset() }
     }
 }
 
@@ -137,7 +139,8 @@ struct SetupPanel: View {
             }
         }
         .onAppear {
-            installer.reset()
+            // A finished or running install keeps its place; only a stale failure is cleared.
+            if installer.failure != nil { installer.reset() }
             installer.checkTools()
         }
     }

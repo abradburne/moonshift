@@ -23,7 +23,7 @@ set -euo pipefail
 cd "${0:A:h:h}"
 identity=${MOONSHIFT_SIGN_IDENTITY:-Developer ID Application: XenoCode Inc (HVUXZ635F3)}
 profile=${MOONSHIFT_ASC_PROFILE:-XenoCode}
-version=1.0.0
+version=1.0.1
 name=Moonshift
 flags=(-O -wmo)
 notarize=false
@@ -93,7 +93,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>NSHumanReadableCopyright</key><string>© $(date +%Y) Alan Bradburne. Free software under the GNU GPL v3 or later.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
   $location
-  <key>StudioPort</key><integer>8766</integer>
+  <key>StudioPort</key><integer>${MOONSHIFT_PORT:-8766}</integer>
 </dict>
 </plist>
 PLIST
