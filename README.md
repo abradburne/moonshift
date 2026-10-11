@@ -31,6 +31,9 @@ cover while one is being created; quitting stops a cover in progress.
 
 Good to know:
 
+- The Create screen's *Score* section shows the ABC notation a take follows.
+  Edit it to change notes, chords or tempo; *Listen Now* writes it before a
+  first take.
 - A length is a ceiling. A shorter song ends sooner; a song longer than the
   limit is cut off, and the take says so.
 - Every take uses a new random seed, so the same settings give a new performance.
@@ -64,7 +67,8 @@ claude mcp add --transport http moonshift http://127.0.0.1:8766/mcp
 | `get_job`, `cancel_job`, `delete_take` | Follow, stop, and remove work |
 
 A score an agent writes replaces the transcription until you choose *Use
-Original Score* on the Create screen. Edits made by an agent appear in the app
+Original Score* in the Score section of the Create screen, where you can also
+read and edit the score yourself. Edits made by an agent appear in the app
 as they happen. The server only answers on this Mac and refuses requests from
 web pages.
 

@@ -19,6 +19,7 @@ struct CreateStep: View {
         VStack(alignment: .leading, spacing: 24) {
             StepHeading(title: "Create the cover")
             summary
+            ScoreSection(studio: studio)
             if studio.isReady, studio.health != nil, !studio.modelsReady { missingModels }
             if let job = studio.activeJob {
                 JobProgressCard(studio: studio, job: job)
@@ -42,17 +43,6 @@ struct CreateStep: View {
                 Image(systemName: "arrow.right").foregroundStyle(.tertiary)
                 facet(symbol: "moon.fill", tint: Theme.accent, label: studio.project.keepsHarmony ? "Melody and harmony" : "Melody",
                       value: studio.project.cover_preset.isEmpty ? "Custom style" : studio.project.cover_preset)
-            }
-            if studio.project.hasEditedScore {
-                HStack(spacing: 12) {
-                    Callout(text: "This cover renders from an edited score, not the one heard in the recording.", symbol: "pencil.and.outline", tint: Theme.accent)
-                    Spacer(minLength: 8)
-                    Button("Use Original Score") {
-                        studio.project.score_edited = false
-                        studio.project.abc = ""
-                    }
-                    .buttonStyle(.quiet)
-                }
             }
             Divider().opacity(0.6)
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 12) {
@@ -371,5 +361,68 @@ private struct MelodyPreview: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card(padding: 14)
+    }
+}
+
+/// The ABC score the cover is rendered from: tucked away, but there to read and change.
+private struct ScoreSection: View {
+    @Bindable var studio: Studio
+    @AppStorage("ScoreExpanded") private var expanded = false
+
+    private var listening: Bool { studio.activeJob?.isTranscription == true }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button { withAnimation(.snappy(duration: 0.2)) { expanded.toggle() } } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                    Text("Score").font(.headline)
+                    if studio.project.hasEditedScore {
+                        Text("Edited").font(.caption2.weight(.bold)).foregroundStyle(Theme.onAccent)
+                            .padding(.horizontal, 6).padding(.vertical, 2).background(Theme.accent, in: Capsule())
+                    }
+                    Spacer()
+                    Text(summary).font(.caption).foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(expanded ? "Hide the score" : "Show the score")
+
+            if expanded {
+                if studio.score.isEmpty {
+                    HStack(spacing: 12) {
+                        Text(studio.project.hasSong ? "The score is written when Moonshift listens to the song. That happens with your first take, or now."
+                             : "Add a song first. Its score is written when Moonshift listens to it.")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        if listening { ProgressView().controlSize(.small) }
+                        Button("Listen Now") { Task { await studio.listen() } }
+                            .buttonStyle(.quiet)
+                            .disabled(!studio.project.hasSong || studio.locked || studio.health?.transcriptionReady != true)
+                    }
+                } else {
+                    LyricsEditor(text: Binding(get: { studio.score }, set: { studio.editScore($0) }), score: true)
+                        .frame(height: 260)
+                        .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .disabled(studio.locked)
+                    HStack(spacing: 12) {
+                        Text("ABC notation. Change notes, the chords in quotes, or the Q: tempo. Takes follow what is written here.")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        if studio.project.hasEditedScore {
+                            Button("Use Original Score") { studio.editScore("") }.buttonStyle(.quiet).disabled(studio.locked)
+                        }
+                    }
+                }
+            }
+        }
+        .card(padding: 16)
+    }
+
+    private var summary: String {
+        if studio.score.isEmpty { return listening ? "Listening…" : "Not written yet" }
+        return studio.project.keepsHarmony ? "Melody and chords" : "Melody"
     }
 }

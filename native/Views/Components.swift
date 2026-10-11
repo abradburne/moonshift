@@ -103,9 +103,11 @@ struct Callout: View {
     }
 }
 
-/// A plain-text lyrics editor that tints `[Section]` labels.
+/// A plain-text editor for lyrics, tinting `[Section]` labels, or for an ABC
+/// score, set in a fixed-width face with its header fields and chords tinted.
 struct LyricsEditor: NSViewRepresentable {
     @Binding var text: String
+    var score = false
     var onEdit: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -124,11 +126,11 @@ struct LyricsEditor: NSViewRepresentable {
         view.isContinuousSpellCheckingEnabled = false
         view.drawsBackground = false
         view.textContainerInset = NSSize(width: 14, height: 16)
-        view.font = Self.font
+        view.font = font
         view.textColor = Self.textColor
         view.insertionPointColor = Theme.nsAccent
         view.defaultParagraphStyle = Self.paragraph
-        view.typingAttributes = [.font: Self.font, .foregroundColor: Self.textColor, .paragraphStyle: Self.paragraph]
+        view.typingAttributes = [.font: font, .foregroundColor: Self.textColor, .paragraphStyle: Self.paragraph]
         view.delegate = context.coordinator
         view.string = text
         context.coordinator.highlight(view)
@@ -145,14 +147,17 @@ struct LyricsEditor: NSViewRepresentable {
         }
     }
 
-    private static let font = NSFont.systemFont(ofSize: 14)
-    private static let textColor = NSColor(calibratedWhite: 0.92, alpha: 1)
-    private static let paragraph: NSParagraphStyle = {
+    fileprivate var font: NSFont { score ? .monospacedSystemFont(ofSize: 12.5, weight: .regular) : .systemFont(ofSize: 14) }
+    fileprivate var accentFont: NSFont { score ? .monospacedSystemFont(ofSize: 12.5, weight: .semibold) : .systemFont(ofSize: 14, weight: .semibold) }
+    fileprivate static let textColor = NSColor(calibratedWhite: 0.92, alpha: 1)
+    fileprivate static let paragraph: NSParagraphStyle = {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = 4
         return style
     }()
-    private static let sectionLabel = try? NSRegularExpression(pattern: "\\[[^\\]\\n]+\\]")
+    fileprivate static let sectionLabel = try? NSRegularExpression(pattern: "\\[[^\\]\\n]+\\]")
+    /// Header fields such as `K:F` at the start of a line, and chord names in quotes.
+    fileprivate static let scoreMarks = try? NSRegularExpression(pattern: "^[A-Za-z]:.*$|\"[^\"\\n]*\"", options: .anchorsMatchLines)
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: LyricsEditor
@@ -169,10 +174,11 @@ struct LyricsEditor: NSViewRepresentable {
             guard let storage = view.textStorage else { return }
             let whole = NSRange(location: 0, length: storage.length)
             storage.beginEditing()
-            storage.setAttributes([.font: LyricsEditor.font, .foregroundColor: LyricsEditor.textColor, .paragraphStyle: LyricsEditor.paragraph], range: whole)
-            LyricsEditor.sectionLabel?.enumerateMatches(in: storage.string, range: whole) { match, _, _ in
+            storage.setAttributes([.font: parent.font, .foregroundColor: LyricsEditor.textColor, .paragraphStyle: LyricsEditor.paragraph], range: whole)
+            let accent = parent.accentFont
+            (parent.score ? LyricsEditor.scoreMarks : LyricsEditor.sectionLabel)?.enumerateMatches(in: storage.string, range: whole) { match, _, _ in
                 if let range = match?.range {
-                    storage.addAttributes([.foregroundColor: Theme.nsAccent, .font: NSFont.systemFont(ofSize: 14, weight: .semibold)], range: range)
+                    storage.addAttributes([.foregroundColor: Theme.nsAccent, .font: accent], range: range)
                 }
             }
             storage.endEditing()

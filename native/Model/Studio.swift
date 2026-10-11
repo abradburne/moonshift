@@ -510,6 +510,31 @@ import Observation
         }
     }
 
+    /// Transcribes the recording without rendering, so its score can be read and edited first.
+    func listen() async {
+        guard isReady, !locked, project.hasSong, transcription(of: project.cover_source) == nil else { return }
+        submitting = true
+        defer { submitting = false }
+        guard await save() else { return }
+        await submit(JobRequest(kind: "transcribe", project: project, source: project.cover_source))
+    }
+
+    /// The score a take would be rendered from: an edited one, or what was heard in the recording.
+    var score: String {
+        if project.hasEditedScore { return project.abc }
+        let heard = transcription(of: project.cover_source)?.result
+        return (project.keepsHarmony ? heard?.full_abc : heard?.abc) ?? ""
+    }
+
+    /// Typing in the score makes it this cover's own; clearing it, or typing it back, returns to the original.
+    func editScore(_ text: String) {
+        let heard = transcription(of: project.cover_source)?.result
+        let original = (project.keepsHarmony ? heard?.full_abc : heard?.abc) ?? ""
+        let edited = !text.trimmed.isEmpty && text != original
+        project.abc = edited ? text : ""
+        project.score_edited = edited
+    }
+
     private func advanceChains() {
         for (id, snapshot) in chains {
             guard let job = jobs.first(where: { $0.id == id }) else { chains[id] = nil; continue }
