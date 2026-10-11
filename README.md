@@ -39,6 +39,35 @@ Good to know:
 - Memory and progress guards stop a job that would exhaust memory or has stalled.
 - Singers are new voices shaped by a description. They do not clone a recording.
 
+## Working with an agent
+
+Moonshift has a built-in [Model Context Protocol](https://modelcontextprotocol.io)
+server, so an AI agent can do what you can: read a cover's lyrics, style and
+ABC score, change them, and render the result. Give it the score and ask it to
+reharmonize the chorus, write a solo, or adapt the words to a new style; each
+revision renders as a new take.
+
+While Moonshift is open, the server answers at `http://127.0.0.1:8766/mcp`
+(Settings › Agents shows this, with a copy button). For Claude Code:
+
+```sh
+claude mcp add --transport http moonshift http://127.0.0.1:8766/mcp
+```
+
+| Tool | What it does |
+| --- | --- |
+| `status` | Which models are installed, free memory, and what is rendering |
+| `list_covers`, `get_cover` | Read covers, including the score and the audio paths of takes |
+| `create_cover` | Start a cover from a recording on this Mac |
+| `update_cover` | Change lyrics, style, singer, tempo, length, quality, or the score |
+| `transcribe`, `create_take` | Listen to the recording; render the cover as it stands |
+| `get_job`, `cancel_job`, `delete_take` | Follow, stop, and remove work |
+
+A score an agent writes replaces the transcription until you choose *Use
+Original Score* on the Create screen. Edits made by an agent appear in the app
+as they happen. The server only answers on this Mac and refuses requests from
+web pages.
+
 ## Optional online lookup
 
 Off until you turn it on. *Find Online* sends the song's title and artist to
@@ -97,7 +126,7 @@ Generation itself never downloads anything.
 | Path | Purpose |
 | --- | --- |
 | `native/` | The SwiftUI app. `Model/` holds state and the service client, `Views/` the interface, `Resources/Moonshift.icon` the Icon Composer document |
-| `studio/` | The local service: `server.py` owns the job queue, `worker.py` runs the music engine, `covers.py` transcribes, `song_lookup.py` handles metadata, lyrics and lookup |
+| `studio/` | The local service: `server.py` owns the job queue, `worker.py` runs the music engine, `covers.py` transcribes, `song_lookup.py` handles metadata, lyrics and lookup, `mcp.py` serves agents |
 | `scripts/` | Build and setup |
 | `data/` | Your covers, imported songs and takes |
 | `.models`, `.runtime`, `.venv`, `.covers-venv`, `.lookup-venv`, `.cache` | Model weights, the music engine, and Python environments |

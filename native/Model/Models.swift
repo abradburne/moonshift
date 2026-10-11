@@ -8,6 +8,8 @@ struct Project: Codable, Identifiable, Equatable {
     var style = ""
     var lyrics = ""
     var abc = ""
+    /// The score was edited by hand or by an agent, and is used instead of the transcription.
+    var score_edited = false
     var voice = "velvet"
     var vocal_prompt = ""
     var language = "English"
@@ -42,7 +44,7 @@ struct Project: Codable, Identifiable, Equatable {
         func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T { (try? c.decodeIfPresent(T.self, forKey: key)) ?? fallback }
         let base = Project()
         id = value(.id, base.id); title = value(.title, base.title); style = value(.style, base.style)
-        lyrics = value(.lyrics, base.lyrics); abc = value(.abc, base.abc); voice = value(.voice, base.voice)
+        lyrics = value(.lyrics, base.lyrics); abc = value(.abc, base.abc); score_edited = value(.score_edited, false); voice = value(.voice, base.voice)
         vocal_prompt = value(.vocal_prompt, base.vocal_prompt); language = value(.language, base.language)
         cot = value(.cot, "full"); seed = value(.seed, base.seed); cfg_scale = value(.cfg_scale, base.cfg_scale)
         temperature = value(.temperature, base.temperature); max_tokens = value(.max_tokens, 9000)
@@ -57,6 +59,7 @@ struct Project: Codable, Identifiable, Equatable {
     var hasSong: Bool { !cover_source.isEmpty }
     var hasWords: Bool { !lyrics.trimmed.isEmpty }
     var hasStyle: Bool { !style.trimmed.isEmpty }
+    var hasEditedScore: Bool { score_edited && !abc.trimmed.isEmpty }
     /// Worth keeping on disk. An untouched new cover is not.
     var hasContent: Bool { hasSong || hasWords || title != Project.untitled }
     var quality: Quality { Quality(rawValue: engine ?? "") ?? .standard }

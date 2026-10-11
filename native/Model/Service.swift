@@ -10,7 +10,7 @@ struct ServiceError: LocalizedError {
 /// The loopback service that runs the models: its process and its HTTP API.
 @MainActor final class Service {
     /// Must match `API_VERSION` in `studio/server.py`.
-    static let apiVersion = 2
+    static let apiVersion = 3
 
     /// Models, environments and covers. A build made for a checkout uses that
     /// folder; the packaged app uses its Application Support folder.

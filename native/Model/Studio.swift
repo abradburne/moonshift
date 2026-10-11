@@ -322,6 +322,12 @@ import Observation
     private func apply(_ state: ServiceState) {
         let covers = state.projects.elements.filter { $0.app_mode == "covers" }
         if covers != projects { projects = covers }
+        // An agent may have edited the open cover. Take its version unless there are unsaved edits here.
+        if !isDirty, saving == nil, let stored = covers.first(where: { $0.id == project.id && !$0.id.isEmpty }),
+           stored.updated_at > saved.updated_at, stored.content != project.content {
+            saved = stored
+            project = stored
+        }
         guard state.jobs.elements != jobs else { return }
         jobs = state.jobs.elements
 
@@ -496,7 +502,8 @@ import Observation
         project.seed = Int.random(in: 1..<2_000_000_000)
         guard await save() else { return }
         let snapshot = project
-        if let transcription = transcription(of: snapshot.cover_source) {
+        let transcription = transcription(of: snapshot.cover_source)
+        if transcription != nil || snapshot.hasEditedScore {
             await generate(snapshot, from: transcription)
         } else if let job = await submit(JobRequest(kind: "transcribe", project: snapshot, source: snapshot.cover_source)) {
             chains[job.id] = snapshot
@@ -522,18 +529,23 @@ import Observation
     }
 
     /// Queues the music job with the score heard in the reference song.
-    private func generate(_ snapshot: Project, from transcription: Job, resuming: Job? = nil) async {
+    private func generate(_ snapshot: Project, from transcription: Job?, resuming: Job? = nil) async {
         var cover = snapshot
-        guard let score = cover.keepsHarmony ? transcription.result.full_abc : transcription.result.abc, !score.isEmpty else {
-            notice = Notice(title: "No melody was found", message: "Moonshift could not hear a usable melody in this recording. Try a clearer recording of the song.")
-            return
+        // A score edited by hand or by an agent is rendered as written.
+        if !cover.hasEditedScore {
+            guard let transcription, let score = cover.keepsHarmony ? transcription.result.full_abc : transcription.result.abc, !score.isEmpty else {
+                notice = Notice(title: "No melody was found", message: "Moonshift could not hear a usable melody in this recording. Try a clearer recording of the song.")
+                return
+            }
+            cover.abc = score
+            cover.cover_job = transcription.id
+        } else if cover.cover_job.isEmpty {
+            cover.cover_job = transcription?.id ?? "edited"
         }
-        cover.abc = score
-        cover.cover_job = transcription.id
         if cover.id == project.id {
             // The saved cover records which score it was made from.
-            project.abc = score
-            project.cover_job = transcription.id
+            project.abc = cover.abc
+            project.cover_job = cover.cover_job
             guard await save() else { return }
         }
         await submit(JobRequest(kind: "generate", project: cover, resumeFrom: resuming?.id ?? ""))

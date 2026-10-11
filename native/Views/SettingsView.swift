@@ -7,6 +7,7 @@ struct SettingsView: View {
         TabView {
             GeneralSettings(studio: studio).tabItem { Label("General", systemImage: "gearshape") }
             ModelSettings(studio: studio).tabItem { Label("Models", systemImage: "shippingbox") }
+            AgentSettings(studio: studio).tabItem { Label("Agents", systemImage: "wand.and.stars") }
         }
         .frame(width: 520)
         .tint(Theme.accent)
@@ -85,6 +86,41 @@ private struct ModelSettings: View {
         } label: {
             Text(title)
             Text(detail)
+        }
+    }
+}
+
+/// How to connect an AI agent to Moonshift over the Model Context Protocol.
+private struct AgentSettings: View {
+    var studio: Studio
+
+    private var address: String { "http://127.0.0.1:\(studio.service.port)/mcp" }
+    private var command: String { "claude mcp add --transport http moonshift \(address)" }
+
+    var body: some View {
+        Form {
+            Section {
+                copyable("Address", address)
+                copyable("Claude Code", command)
+            } header: {
+                Text("Connect an agent")
+            } footer: {
+                Text("An agent that speaks the Model Context Protocol can read your covers, edit their lyrics, style and score, and render takes, while Moonshift is open. The address only answers on this Mac. Changes an agent makes appear here as it makes them.")
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func copyable(_ label: String, _ value: String) -> some View {
+        LabeledContent(label) {
+            HStack {
+                Text(value).font(.system(.callout, design: .monospaced)).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                Button("Copy", systemImage: "doc.on.doc") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(value, forType: .string)
+                }
+                .labelStyle(.iconOnly).help("Copy")
+            }
         }
     }
 }

@@ -26,7 +26,7 @@ from .paths import CODE, HOME
 from .resources import estimate, memory_snapshot, process_tree_footprint, stop_process_group, installed, covers_installed
 
 # Bump when the native client needs a newer service than one already running.
-API_VERSION = 2
+API_VERSION = 3
 ROOT = HOME
 DATA = ROOT / "data"
 for name in ("projects", "jobs", "imports", "exports"):
@@ -603,3 +603,9 @@ async def import_audio(request: Request):
 def audio_file(relative: str):
     path = resolve_data_file(relative)
     return FileResponse(path, filename=path.name)
+
+
+# Agents reach the same covers through the Model Context Protocol.
+from .mcp import router as mcp_router  # noqa: E402
+
+app.include_router(mcp_router)

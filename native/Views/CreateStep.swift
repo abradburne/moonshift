@@ -43,6 +43,17 @@ struct CreateStep: View {
                 facet(symbol: "moon.fill", tint: Theme.accent, label: studio.project.keepsHarmony ? "Melody and harmony" : "Melody",
                       value: studio.project.cover_preset.isEmpty ? "Custom style" : studio.project.cover_preset)
             }
+            if studio.project.hasEditedScore {
+                HStack(spacing: 12) {
+                    Callout(text: "This cover renders from an edited score, not the one heard in the recording.", symbol: "pencil.and.outline", tint: Theme.accent)
+                    Spacer(minLength: 8)
+                    Button("Use Original Score") {
+                        studio.project.score_edited = false
+                        studio.project.abc = ""
+                    }
+                    .buttonStyle(.quiet)
+                }
+            }
             Divider().opacity(0.6)
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 12) {
                 GridRow {

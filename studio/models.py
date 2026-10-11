@@ -12,6 +12,8 @@ class Project(BaseModel):
     style: str = Field(default="", max_length=6000)
     lyrics: str = Field(default="", max_length=18000)
     abc: str = Field(default="", max_length=30000)
+    # True when the score was written by hand or by an agent, not taken from the transcription.
+    score_edited: bool = False
     voice: str = "ember"
     vocal_prompt: str = Field(default="", max_length=2000)
     language: str = "English"
