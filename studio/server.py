@@ -466,8 +466,8 @@ def find_lyrics(request: SongLookupRequest):
 @app.post("/api/cover/lyrics/import")
 def import_lyrics(request: LyricsImportRequest):
     from .song_lookup import parse_lyrics
-    if request.extension.lower() not in {".txt", ".srt", ".lrc", ".vtt"}:
-        raise HTTPException(400, "Import TXT, SRT, LRC or WebVTT lyrics.")
+    if request.extension.lower() not in {".txt", ".srt", ".lrc", ".vtt", ".ttml"}:
+        raise HTTPException(400, "Import TXT, SRT, LRC, WebVTT or TTML lyrics.")
     try:
         return {"lyrics": parse_lyrics(request.text, request.extension)}
     except ValueError as exc:

@@ -96,10 +96,13 @@ struct WorkspaceView: View {
             .animation(.snappy(duration: 0.25), value: studio.player.isLoaded)
             .overlay { if dropping { DropHighlight() } }
             .onDrop(of: [.fileURL], isTargeted: $dropping) { providers in
-                guard !studio.locked, let provider = providers.first else { return false }
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url else { return }
-                    Task { @MainActor in await studio.importSong(url) }
+                // A recording and its lyric file can arrive together.
+                guard !studio.locked, !providers.isEmpty else { return false }
+                for provider in providers {
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                        guard let url else { return }
+                        Task { @MainActor in await studio.importDropped(url) }
+                    }
                 }
                 return true
             }

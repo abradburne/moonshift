@@ -14,6 +14,7 @@ from studio.models import Project
     (".srt", "1\r\n00:00:01,000 --> 00:00:03,000\r\n<i>Come home</i>\r\n\r\n2\r\n00:00:04,000 --> 00:00:06,000\r\nCome home", "Come home\n\nCome home"),
     (".lrc", "[ar:Artist]\n[ti:Title]\n[offset:0]\n[00:01.20]Come <00:02.00>home\n[00:04.20][00:06.00]Come home\n[Chorus]\nStay", "Come home\nCome home\n[Chorus]\nStay"),
     (".vtt", "WEBVTT\n\nNOTE ignore this\nprivate cue note\n\nintro\n00:01.000 --> 00:03.000 align:start\n<v Singer>Come &amp; stay</v>\n\n00:04.000 --> 00:06.000\nCome &amp; stay", "Come & stay\n\nCome & stay"),
+    (".ttml", '<?xml version="1.0" encoding="UTF-8"?><tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" itunes:timing="Word"><head><metadata><iTunesMetadata><translations><translation><text for="L1">Ignore me</text></translation></translations></iTunesMetadata></metadata></head><body><div itunes:song-part="Verse"><p begin="1.0" end="3.0"><span begin="1.0" end="1.5">Come</span> <span begin="1.5" end="2.0">ho</span><span begin="2.0" end="3.0">me</span><span ttm:role="x-bg"><span>stay</span></span></p><p>Rock &amp; roll<br/>Again</p></div><div itunes:song-part="PreChorus"><p>Come home</p></div><div><p>Come home</p></div></body></tt>', "[Verse]\nCome home (stay)\nRock & roll\nAgain\n\n[Pre-Chorus]\nCome home\n\nCome home"),
     (".txt", "\ufeff[Verse]\n123\nCome home\n\n[Chorus]\nCome home", "[Verse]\n123\nCome home\n\n[Chorus]\nCome home"),
 ])
 def test_subtitle_formats_preserve_sung_repetition(extension, text, expected):
@@ -25,6 +26,10 @@ def test_empty_and_oversized_lyrics_are_rejected():
         song_lookup.parse_lyrics("1\n00:01:00,000 --> 00:01:01,000", ".srt")
     with pytest.raises(ValueError):
         song_lookup.parse_lyrics("x" * 18001)
+    with pytest.raises(ValueError):
+        song_lookup.parse_lyrics('<!DOCTYPE tt [<!ENTITY a "aaaa">]><tt><body><p>&a;</p></body></tt>', ".ttml")
+    with pytest.raises(ValueError):
+        song_lookup.parse_lyrics("<tt><body><p>Unclosed</body></tt>", ".ttml")
 
 
 def test_metadata_is_local_and_falls_back_to_filename(monkeypatch, tmp_path):

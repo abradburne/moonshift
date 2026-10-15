@@ -5,6 +5,20 @@ import UniformTypeIdentifiers
 extension Studio {
     static let audioExtensions = ["wav", "flac", "mp3", "aiff", "aif", "m4a"]
     static let audioTypes = audioExtensions.compactMap { UTType(filenameExtension: $0) }
+    static let lyricExtensions = ["txt", "srt", "lrc", "vtt", "ttml"]
+
+    /// A file dropped on the window: a recording becomes the song, a lyric file its words.
+    func importDropped(_ url: URL) async {
+        let fileExtension = url.pathExtension.lowercased()
+        if Self.lyricExtensions.contains(fileExtension) {
+            step = .song
+            await importLyrics(url)
+        } else if Self.audioExtensions.contains(fileExtension) {
+            await importSong(url)
+        } else {
+            notice = Notice(title: "That file is not a song or lyrics", message: "Drop WAV, FLAC, MP3, AIFF or M4A audio, or a TXT, SRT, LRC, WebVTT or TTML lyric file.")
+        }
+    }
 
     // MARK: Recording
 
@@ -132,33 +146,36 @@ extension Studio {
 
     // MARK: Lyric files
 
-    func importLyrics() {
+    func chooseLyrics() {
         guard isReady, !locked else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = ["txt", "srt", "lrc", "vtt"].compactMap { UTType(filenameExtension: $0) }
+        panel.allowedContentTypes = Self.lyricExtensions.compactMap { UTType(filenameExtension: $0) }
         panel.message = "Choose a lyric or subtitle file. Timings are removed."
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { await importLyrics(url) }
+    }
+
+    func importLyrics(_ url: URL) async {
+        guard isReady, !locked else { return }
         let target = project.id, before = project.lyrics
-        Task {
-            struct Input: Encodable {
-                var text: String
-                var fileExtension: String
-                enum CodingKeys: String, CodingKey { case text; case fileExtension = "extension" }
-            }
-            struct Parsed: Decodable { var lyrics: String }
-            do {
-                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                guard size <= 1_000_000 else { throw ServiceError(message: "Choose a lyric file up to 1 MB.") }
-                let data = try Data(contentsOf: url)
-                guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
-                let parsed: Parsed = try await service.post("cover/lyrics/import", Input(text: text, fileExtension: "." + url.pathExtension.lowercased()))
-                // Keep anything typed while the file was being read.
-                guard project.id == target, project.lyrics == before else { return }
-                project.lyrics = parsed.lyrics
-                project.lyrics_source = url.lastPathComponent
-            } catch {
-                report(error, title: "These lyrics could not be imported")
-            }
+        struct Input: Encodable {
+            var text: String
+            var fileExtension: String
+            enum CodingKeys: String, CodingKey { case text; case fileExtension = "extension" }
+        }
+        struct Parsed: Decodable { var lyrics: String }
+        do {
+            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            guard size <= 1_000_000 else { throw ServiceError(message: "Choose a lyric file up to 1 MB.") }
+            let data = try Data(contentsOf: url)
+            guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
+            let parsed: Parsed = try await service.post("cover/lyrics/import", Input(text: text, fileExtension: "." + url.pathExtension.lowercased()))
+            // Keep anything typed while the file was being read.
+            guard project.id == target, project.lyrics == before else { return }
+            project.lyrics = parsed.lyrics
+            project.lyrics_source = url.lastPathComponent
+        } catch {
+            report(error, title: "These lyrics could not be imported")
         }
     }
 

@@ -10,6 +10,7 @@ import re
 import subprocess
 import tempfile
 import unicodedata
+from xml.etree import ElementTree
 
 import httpx
 
@@ -25,6 +26,8 @@ def lookup_installed(root):
 def parse_lyrics(text, extension=".txt"):
     """Remove subtitle timing/markup, preserving repeated sung lines and sections."""
     extension = extension.lower()
+    if extension == ".ttml":
+        return checked_lyrics(ttml_lyrics(text))
     lines = text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n").split("\n")
     result = []
     in_vtt_metadata = False
@@ -52,12 +55,70 @@ def parse_lyrics(text, extension=".txt"):
             line = html.unescape(re.sub(r"<[^>]*>|\{\\[^}]*\}", "", line))
         if line or (result and result[-1]):
             result.append(line)
-    lyrics = "\n".join(result).strip()
+    return checked_lyrics("\n".join(result))
+
+
+def checked_lyrics(lyrics):
+    lyrics = lyrics.strip()
     if not lyrics:
         raise ValueError("No lyric text was found in that file. Paste the words instead.")
     if len(lyrics) > 18000:
         raise ValueError("Import lyrics up to 18,000 characters.")
     return lyrics
+
+
+def ttml_lyrics(text):
+    """Read timed-text lyrics (as Apple Music exports them): each <p> is a line,
+    each <div> a stanza, labelled by its song part when the file names one."""
+    # TTML never declares entities, and refusing them keeps expansion attacks out.
+    if re.search(r"<!(?:DOCTYPE|ENTITY)", text, re.I):
+        raise ValueError("That TTML file could not be read.")
+    try:
+        root = ElementTree.fromstring(text.lstrip("\ufeff"))
+    except ElementTree.ParseError:
+        raise ValueError("That TTML file could not be read.")
+
+    def local(name):
+        return name.rsplit("}", 1)[-1]
+
+    def attribute(element, *names):
+        return next((value for key, value in element.attrib.items()
+                     if local(key).replace("-", "").lower() in names), "")
+
+    def words(element):
+        parts = [element.text or ""]
+        for child in element:
+            tag, role = local(child.tag), attribute(child, "role")
+            if tag == "br":
+                parts.append("\n")
+            elif tag == "span" and role not in {"x-translation", "x-roman"}:
+                inner = words(child)
+                # Background vocals sit beside the lead line, in brackets.
+                if role == "x-bg" and inner.strip():
+                    inner = inner.strip()
+                    inner = f" {inner}" if inner.startswith("(") else f" ({inner})"
+                parts.append(inner)
+            parts.append(child.tail or "")
+        return "".join(parts)
+
+    body = next((element for element in root.iter() if local(element.tag) == "body"), None)
+    if body is None:
+        raise ValueError("No lyric text was found in that file. Paste the words instead.")
+    # A stanza is whichever element holds the lines directly, however deeply divs nest.
+    stanzas = [element for element in body.iter() if any(local(child.tag) == "p" for child in element)]
+    result = []
+    for stanza in stanzas:
+        lines = [" ".join(line.split()) for p in stanza if local(p.tag) == "p" for line in words(p).split("\n")]
+        lines = [line for line in lines if line]
+        if not lines:
+            continue
+        part = attribute(stanza, "songpart")
+        if part:
+            lines.insert(0, "[" + re.sub(r"(?<=[a-z])(?=[A-Z])", "-", part.strip()) + "]")
+        if result:
+            result.append("")
+        result.extend(lines)
+    return "\n".join(result)
 
 
 def audio_metadata(path, name):

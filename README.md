@@ -16,8 +16,8 @@ From a checkout, double-click **[Moonshift.command](Moonshift.command)** instead
 that build keeps everything in the checkout folder.
 
 1. **Song.** Drop in WAV, FLAC, MP3, AIFF or M4A audio, up to 15 minutes or
-   512 MB. Paste the lyrics, import a TXT, SRT, LRC or WebVTT file, or use
-   *Find Online*. Subtitle timings and markup are removed on import.
+   512 MB. Paste the lyrics, import or drop in a TXT, SRT, LRC, WebVTT or TTML
+   file, or use *Find Online*. Subtitle timings and markup are removed on import.
 2. **Style.** Pick a preset or describe the sound, choose a singer, and decide
    whether to keep only the melody or the original harmony too. Your own
    presets live beside the built-in ones.

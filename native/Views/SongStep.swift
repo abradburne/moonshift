@@ -32,8 +32,8 @@ struct SongStep: View {
                         Button("Find Online", systemImage: "magnifyingglass") { findOnline() }
                             .disabled(!studio.project.hasSong || studio.lookupBusy)
                             .help("Look for this song's lyrics on LRCLIB")
-                        Button("Import File…", systemImage: "doc.text") { studio.importLyrics() }
-                            .help("Use a TXT, SRT, LRC or WebVTT file")
+                        Button("Import File…", systemImage: "doc.text") { studio.chooseLyrics() }
+                            .help("Use a TXT, SRT, LRC, WebVTT or TTML file, or drop one on the window")
                     }
                     if !studio.lookupMessage.isEmpty { Text(studio.lookupMessage).font(.callout).foregroundStyle(.secondary) }
                     if !studio.candidates.isEmpty { candidates }
