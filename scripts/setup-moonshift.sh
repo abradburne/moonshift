@@ -1,6 +1,6 @@
 #!/bin/zsh
-# Installs what Moonshift needs to make covers: the service, the music engine
-# and model, and the transcription models. Safe to run again; finished
+# Installs what Moonshift needs to make covers: the music engine and model,
+# and the transcription models. Safe to run again; finished
 # downloads are reused. The app runs this from its setup screen.
 #
 #   setup-moonshift.sh [q4|q8|lookup]    q4: 4-bit music model (default)
@@ -21,9 +21,6 @@ fi
 need uv 'uv is missing. Install it with: brew install uv'
 
 if [[ "$precision" != lookup ]]; then
-  step service
-  [[ -x .venv/bin/python ]] || uv venv --python 3.12 .venv
-  uv pip install --python .venv/bin/python fastapi==0.143.0 uvicorn==0.54.0 httpx==0.28.1 psutil==7.2.2 numpy==2.2.6 soundfile==0.13.1
   "$scripts/setup-metal.sh" "$precision"
   "$scripts/setup-covers.sh"
 fi

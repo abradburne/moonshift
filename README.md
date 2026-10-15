@@ -90,7 +90,8 @@ Composer icon).
 ./scripts/build-moonshift.sh              # build/Moonshift.app, for this checkout
 ./scripts/build-moonshift.sh --notarize   # the same, notarized
 ./scripts/build-moonshift.sh --release    # self-contained, notarized, as a .dmg
-.venv/bin/python -m pytest -q tests       # service tests
+./scripts/test-swift.sh                   # engine tests
+uv run --no-project --with pytest python -m pytest -q tests   # transcription helper test
 ```
 
 A local build is signed with the Developer ID certificate when it is in your
@@ -104,8 +105,8 @@ ID certificate in your keychain. Set `MOONSHIFT_SIGN_IDENTITY` and
 `MOONSHIFT_ASC_PROFILE` to your own; the script then signs, submits, staples
 the ticket and runs a Gatekeeper check.
 
-A checkout build is tied to its folder: the service, models and covers stay
-there. A release build can run from anywhere: it carries the service, the setup
+A checkout build is tied to its folder: models and covers stay there. A release
+build can run from anywhere: it carries the transcription helper, the setup
 scripts, uv and the compiled music engine inside the app, and is written to
 `build/release/`.
 
@@ -129,14 +130,14 @@ Generation itself never downloads anything.
 
 | Path | Purpose |
 | --- | --- |
-| `native/` | The SwiftUI app. `Model/` holds state and the service client, `Views/` the interface, `Resources/Moonshift.icon` the Icon Composer document |
-| `studio/` | The local service: `server.py` owns the job queue, `worker.py` runs the music engine, `covers.py` transcribes, `song_lookup.py` handles metadata, lyrics and lookup, `mcp.py` serves agents |
+| `native/` | The SwiftUI app. `Engine/` is the local engine: `Library` keeps covers and jobs, `JobRunner` and `MusicRender` run the models, `AgentTools` and `LoopbackServer` serve agents, `Lyrics` and `SongLookup` read lyrics and song details. `Model/` holds app state, `Views/` the interface, `Resources/Moonshift.icon` the Icon Composer document |
+| `studio/` | The one model that runs in Python: `covers.py` transcribes a recording with SheetSage2. `recognize.py` is the optional Shazam helper |
 | `scripts/` | Build and setup |
 | `data/` | Your covers, imported songs and takes |
-| `.models`, `.runtime`, `.venv`, `.covers-venv`, `.lookup-venv`, `.cache` | Model weights, the music engine, and Python environments |
+| `.models`, `.runtime`, `.covers-venv`, `.lookup-venv`, `.cache` | Model weights, the music engine, and Python environments |
 
-The service listens only on `127.0.0.1:8766`, refuses requests from web pages,
-and exits with the app.
+The agent endpoint listens only on `127.0.0.1:8766`, refuses requests from web
+pages, and closes with the app.
 
 ## License
 

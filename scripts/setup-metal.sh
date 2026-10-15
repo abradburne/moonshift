@@ -24,7 +24,7 @@ if [[ "$(git -C .runtime/audio.cpp rev-parse HEAD)" != "$runtime_commit" ]]; the
   git -C .runtime/audio.cpp fetch origin "$runtime_commit" --depth 1
   git -C .runtime/audio.cpp checkout --detach "$runtime_commit"
 fi
-.venv/bin/python "$scripts/patch-metal-progress.py"
+uv run --quiet --no-project --python 3.12 "$scripts/patch-metal-progress.py"
 (cd .runtime/audio.cpp && scripts/build_metal.sh --build-type Release --model-set custom --models yue2 --target audiocpp_cli --deployment-target 14.0 --jobs "$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || print 4)")
 fi
 

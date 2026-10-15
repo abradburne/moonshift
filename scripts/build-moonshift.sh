@@ -1,11 +1,11 @@
 #!/bin/zsh
 # Builds build/Moonshift.app.
 #
-#   build-moonshift.sh               for this checkout: the app uses the service,
-#                                    models and covers in this folder
+#   build-moonshift.sh               for this checkout: the app uses the models
+#                                    and covers in this folder
 #   build-moonshift.sh --notarize    the same, notarized by Apple
 #   build-moonshift.sh --release     self-contained and notarized, for other Macs:
-#                                    the service ships inside the app, and models
+#                                    the transcription helper ships inside the app, and models
 #                                    and covers live in Application Support.
 #                                    Written to build/release/, with a .dmg
 #
@@ -52,8 +52,8 @@ xcrun actool native/Resources/Moonshift.icon --compile "$app/Contents/Resources"
   --platform macosx --minimum-deployment-target 14.0 --app-icon Moonshift \
   --output-partial-info-plist "$work/icon.plist" >/dev/null
 
-# A checkout build finds its service, models and covers in this folder. The
-# packaged app carries the service and setup scripts with it instead.
+# A checkout build finds its models and covers in this folder. The packaged
+# app carries the transcription helper and setup scripts with it instead.
 if $packaged; then
   location=''
   engine=${MOONSHIFT_ENGINE_BINARY:-.runtime/audio.cpp/build/macos-metal-release/bin/audiocpp_cli}

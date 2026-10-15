@@ -1,7 +1,7 @@
 import AppKit
 import Observation
 
-/// The app's state: the open cover, the library, running jobs, and the local service.
+/// The app's state: the open cover, the library, running jobs, and the local engine.
 @MainActor @Observable final class Studio {
     enum Phase: Equatable {
         case starting
@@ -61,7 +61,6 @@ import Observation
     @ObservationIgnored private var estimating: Task<Void, Never>?
     @ObservationIgnored private var polling: Task<Void, Never>?
     @ObservationIgnored private var settled: Set<String>?
-    @ObservationIgnored private var failures = 0
     @ObservationIgnored private var activity: NSObjectProtocol?
     @ObservationIgnored private var folderAccess: URL?
     #if SNAPSHOT
@@ -138,11 +137,10 @@ import Observation
     // MARK: Startup
 
     func start() async {
-        // Coming from setup, the onboarding screen stays up while the service starts.
+        // Coming from setup, the onboarding screen stays up while the library opens.
         if phase != .needsSetup { phase = .starting }
         #if SNAPSHOT
-        // Screenshots can be taken against a service started by hand, before
-        // macOS has been asked to let this build into the folder.
+        // Screenshots can be taken before macOS has been asked to let this build into the folder.
         let attached = ProcessInfo.processInfo.environment["MOONSHIFT_SNAPSHOT_ATTACH"] != nil
         #else
         let attached = false
@@ -161,13 +159,12 @@ import Observation
             return
         }
         do {
-            health = try await service.connect()
+            health = try service.start()
         } catch {
             phase = .offline(error.localizedDescription)
             return
         }
         phase = .ready
-        failures = 0
         await refresh()
         if !hasContent, let recent = projects.first { load(recent) }
         if health?.canCreate == true {
@@ -210,7 +207,7 @@ import Observation
         installer.root = folder
     }
 
-    /// Setup finished: start the service if this was the first install, and see what is now available.
+    /// Setup finished: open the library if this was the first install, and see what is now available.
     func installFinished() async {
         if isReady {
             await refreshHealth()
@@ -220,7 +217,7 @@ import Observation
         }
     }
 
-    /// The service and models live in the project folder. macOS may ask the user
+    /// The models and covers live in the project folder. macOS may ask the user
     /// before letting the app into it; that question must not freeze the window.
     private func authorizeFolder() async -> Bool {
         let root = service.root
@@ -269,10 +266,8 @@ import Observation
         autosave?.cancel()
         player.pause()
         installer.cancel()
-        if isReady {
-            await save()
-            await service.disconnect()
-        }
+        if isReady { await save() }
+        service.stop()
         folderAccess?.stopAccessingSecurityScopedResource()
     }
 
@@ -294,33 +289,18 @@ import Observation
     }
 
     func refresh() async {
-        guard isReady else { return }
-        do {
-            if let state = try await service.state() { apply(state) }
-            failures = 0
-        } catch {
-            failures += 1
-            if failures == 3 { await reconnect() }
-        }
-    }
-
-    private func reconnect() async {
-        do {
-            health = try await service.connect()
-            failures = 0
-        } catch {
-            polling?.cancel()
-            phase = .offline(error.localizedDescription)
-        }
+        guard isReady, let state = service.state() else { return }
+        apply(state)
     }
 
     func refreshHealth() async {
-        guard isReady, let value: Health = try? await service.get("health"), value != health else { return }
-        health = value
+        guard isReady else { return }
+        let value = service.health()
+        if value != health { health = value }
     }
 
-    private func apply(_ state: ServiceState) {
-        let covers = state.projects.elements.filter { $0.app_mode == "covers" }
+    private func apply(_ state: LibraryState) {
+        let covers = state.projects.filter { $0.app_mode == "covers" }
         if covers != projects { projects = covers }
         // An agent may have edited the open cover. Take its version unless there are unsaved edits here.
         if !isDirty, saving == nil, let stored = covers.first(where: { $0.id == project.id && !$0.id.isEmpty }),
@@ -328,8 +308,8 @@ import Observation
             saved = stored
             project = stored
         }
-        guard state.jobs.elements != jobs else { return }
-        jobs = state.jobs.elements
+        guard state.jobs != jobs else { return }
+        jobs = state.jobs
 
         let finished = Set(jobs.filter { !$0.active }.map(\.id))
         if let settled {
@@ -383,7 +363,7 @@ import Observation
     func refreshEstimate() async {
         guard isReady else { return }
         let asked = project
-        guard let value: RenderEstimate = try? await service.post("estimate", asked), project.content == asked.content else { return }
+        guard let value = try? service.estimate(asked), project.content == asked.content else { return }
         if value != estimate { estimate = value }
     }
 
@@ -395,7 +375,7 @@ import Observation
         let task = Task { [weak self] () -> Bool in
             guard let self else { return false }
             do {
-                let stored: Project = try await self.service.post("projects", sent)
+                let stored = try self.service.save(sent)
                 self.saved = sent
                 self.saved.id = stored.id; self.saved.updated_at = stored.updated_at
                 if self.project.id == sent.id {
@@ -453,7 +433,7 @@ import Observation
         var renamed = target
         renamed.title = title
         do {
-            let stored: Project = try await service.post("projects", renamed)
+            let stored = try service.save(renamed)
             if let index = projects.firstIndex(where: { $0.id == stored.id }) { projects[index] = stored }
         } catch {
             report(error, title: "This cover could not be renamed")
@@ -478,7 +458,7 @@ import Observation
         }
         do {
             if target.id == project.id { autosave?.cancel(); saved = project }
-            try await service.send("DELETE", "projects/\(target.id)")
+            try service.deleteProject(target.id)
             projects.removeAll { $0.id == target.id }
             if target.id == project.id { load(projects.first ?? newProject()) }
             await refresh()
@@ -578,7 +558,7 @@ import Observation
 
     @discardableResult private func submit(_ request: JobRequest) async -> Job? {
         do {
-            let job: Job = try await service.post("jobs", request)
+            let job = try service.createJob(request)
             await refresh()
             return job
         } catch {
@@ -595,7 +575,7 @@ import Observation
         cover.takes = 1
         if inSections { cover.nar_chunk_frames = 1024 }
         do {
-            let _: Job = try await service.post("jobs", JobRequest(kind: "generate", project: cover, resumeFrom: job.id))
+            _ = try service.createJob(JobRequest(kind: "generate", project: cover, resumeFrom: job.id))
             await refresh()
         } catch {
             report(error, title: "Rendering could not resume")
@@ -605,7 +585,7 @@ import Observation
     func cancel(_ job: Job) async {
         chains[job.id] = nil
         do {
-            try await service.send("POST", "jobs/\(job.id)/cancel")
+            try service.cancelJob(job.id)
             await refresh()
         } catch {
             report(error, title: "This job could not be cancelled")
@@ -615,7 +595,7 @@ import Observation
     func delete(_ job: Job) async {
         if job.tracks.contains(where: { $0.audio == player.source }) { player.stop() }
         do {
-            try await service.send("DELETE", "jobs/\(job.id)")
+            try service.deleteJob(job.id)
             await refresh()
         } catch {
             report(error, title: "This take could not be deleted")

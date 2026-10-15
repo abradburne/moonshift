@@ -3,9 +3,9 @@ import UniformTypeIdentifiers
 
 /// The reference song: importing it, naming it, finding its words, and exporting takes.
 extension Studio {
-    static let audioExtensions = ["wav", "flac", "mp3", "aiff", "aif", "m4a"]
+    static let audioExtensions = SongLookup.audioExtensions
     static let audioTypes = audioExtensions.compactMap { UTType(filenameExtension: $0) }
-    static let lyricExtensions = ["txt", "srt", "lrc", "vtt", "ttml"]
+    static let lyricExtensions = LyricFile.extensions
 
     /// A file dropped on the window: a recording becomes the song, a lyric file its words.
     func importDropped(_ url: URL) async {
@@ -41,9 +41,7 @@ extension Studio {
         defer { importing = false }
         let target = project.id
         do {
-            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-            guard size <= 512 * 1024 * 1024 else { throw ServiceError(message: "Choose a recording up to 512 MB.") }
-            let source = try await service.upload(url)
+            let source = try await service.importAudio(url)
             guard project.id == target else { return }
             if player.source == project.cover_source { player.stop() }
             project.cover_source = source
@@ -72,9 +70,8 @@ extension Studio {
     func loadSongDetails() async {
         guard isReady, project.hasSong else { return }
         let source = project.cover_source
-        struct Query: Encodable { var source: String; var name: String }
         do {
-            let details: SongDetails = try await service.post("cover/metadata", Query(source: source, name: project.cover_name))
+            let details = try await service.details(source, name: project.cover_name)
             guard project.cover_source == source else { return }
             songDuration = details.duration ?? 0
             // Never replace what the user typed while this was loading.
@@ -97,9 +94,8 @@ extension Studio {
         lookupBusy = true
         let token = lookupToken, source = project.cover_source
         let typed = (project.song_title, project.song_artist)
-        struct Query: Encodable { var source: String }
         do {
-            let match: SongDetails = try await service.post("cover/identify", Query(source: source), timeout: 65)
+            let match = try await service.identify(source)
             guard lookupToken == token, project.cover_source == source else { return }
             if !match.title.isEmpty, (project.song_title, project.song_artist) == typed {
                 project.song_title = match.title
@@ -120,13 +116,10 @@ extension Studio {
         lookupBusy = true
         candidates = []
         let token = lookupToken
-        struct Query: Encodable { var title: String; var artist: String; var duration: Double }
-        struct Results: Decodable { var candidates: [LyricCandidate] }
         do {
-            let query = Query(title: project.song_title, artist: project.song_artist, duration: songDuration)
-            let results: Results = try await service.post("cover/lyrics/search", query)
+            let found = try await SongLookup.searchLyrics(title: project.song_title, artist: project.song_artist, duration: songDuration)
             guard lookupToken == token else { return }
-            candidates = results.candidates
+            candidates = found
             lookupMessage = candidates.isEmpty ? "No lyrics found for that title. Paste the words, or import a lyric file." : ""
         } catch {
             if lookupToken == token { lookupMessage = error.localizedDescription }
@@ -158,21 +151,15 @@ extension Studio {
     func importLyrics(_ url: URL) async {
         guard isReady, !locked else { return }
         let target = project.id, before = project.lyrics
-        struct Input: Encodable {
-            var text: String
-            var fileExtension: String
-            enum CodingKeys: String, CodingKey { case text; case fileExtension = "extension" }
-        }
-        struct Parsed: Decodable { var lyrics: String }
         do {
             let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
             guard size <= 1_000_000 else { throw ServiceError(message: "Choose a lyric file up to 1 MB.") }
             let data = try Data(contentsOf: url)
             guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
-            let parsed: Parsed = try await service.post("cover/lyrics/import", Input(text: text, fileExtension: "." + url.pathExtension.lowercased()))
+            let lyrics = try LyricFile.parse(text, extension: url.pathExtension)
             // Keep anything typed while the file was being read.
             guard project.id == target, project.lyrics == before else { return }
-            project.lyrics = parsed.lyrics
+            project.lyrics = lyrics
             project.lyrics_source = url.lastPathComponent
         } catch {
             report(error, title: "These lyrics could not be imported")

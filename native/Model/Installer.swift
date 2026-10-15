@@ -98,7 +98,7 @@ import Observation
         guard case .engines(let quality) = plan else { return [lookup] }
         let tools = installingTools ? [Step(id: "tools", title: "Developer tools", detail: "Installs \(installableTools.map(\.name).joined(separator: ", ")) with Homebrew")] : []
         let engine = helpers == nil ? [Step(id: "engine", title: "Music engine", detail: "Compiled for your Mac's GPU · takes a few minutes")] : []
-        return tools + [Step(id: "service", title: "App service", detail: "A private Python runtime for the local engine")] + engine + [
+        return tools + engine + [
             Step(id: "music", title: "Music model", detail: "YuE2 \(quality.bits) · \(Self.musicBytes(quality).formatted(.byteCount(style: .file)))"),
             Step(id: "transcriber-runtime", title: "Transcription runtime", detail: "PyTorch, in its own environment"),
             Step(id: "transcriber", title: "Transcription models", detail: "SheetSage2 and MERT · \(Self.transcriptionBytes.formatted(.byteCount(style: .file)))"),

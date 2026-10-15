@@ -6,7 +6,7 @@ import SwiftUI
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let studio else { return .terminateNow }
-        // The service belongs to the app, so a cover in progress would be lost.
+        // The engine runs inside the app, so a cover in progress would be lost.
         if studio.jobs.contains(where: \.active) {
             let alert = NSAlert()
             alert.messageText = "A cover is still being created"

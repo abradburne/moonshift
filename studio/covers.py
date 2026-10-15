@@ -1,8 +1,48 @@
-"""Official SheetSage2 transcription, isolated from every other model worker."""
+"""Official SheetSage2 transcription: the one model Moonshift runs in Python.
+
+The app starts this as `python -m studio.covers <job folder>` in the transcription
+environment. It reads the job's request, reports progress as `STUDIO_EVENT` lines,
+and leaves `output.json`, or `error.json` with a reason a person can read.
+"""
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
+import traceback
+
+from .paths import HOME as ROOT
+DATA = ROOT / "data"
+
+
+def performance_cores():
+    """Worker threads belong on performance cores; efficiency cores slow them down."""
+    try:
+        count = int(subprocess.run(["/usr/sbin/sysctl", "-n", "hw.perflevel0.physicalcpu"],
+                                   capture_output=True, text=True, timeout=5).stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        count = (os.cpu_count() or 8) // 2
+    return max(4, min(12, count))
+
+
+def event(**values):
+    """Progress for the app: stage text, a phase, and 0–1 progress within it."""
+    print("STUDIO_EVENT " + json.dumps(values), flush=True)
+
+
+def write(path, value):
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2))
+
+
+def relative(path):
+    return str(path.relative_to(DATA))
+
+
+def waveform(audio, bins=300):
+    import numpy as np
+    mono = np.max(np.abs(audio), axis=1) if audio.ndim == 2 else np.abs(audio)
+    return [float(np.max(chunk)) if len(chunk) else 0.0 for chunk in np.array_split(mono, bins)]
 
 
 def melody_preview(midi_bytes, path):
@@ -37,7 +77,6 @@ def melody_preview(midi_bytes, path):
 
 def transcribe(request, directory):
     from .audio import duration_within_limit, probe
-    from .worker import ROOT, DATA, event, performance_cores, relative, waveform, write
     source = (DATA / request["source"]).resolve()
     if not source.is_relative_to(DATA.resolve()) or not source.is_file():
         raise ValueError("Reference recording is missing.")
@@ -94,3 +133,14 @@ def transcribe(request, directory):
             "tracks": [{"name": "Transcribed melody · note preview", "audio": relative(directory / "melody-preview.wav"),
                         "duration": len(signal) / rate, "waveform": waveform(signal), "seed": 0,
                         "abc": melody_abc, "truncated": False}]}
+
+
+if __name__ == "__main__":
+    directory = Path(sys.argv[1]).resolve()
+    try:
+        request = json.loads((directory / "job.json").read_text())["request"]
+        write(directory / "output.json", transcribe(request, directory))
+    except Exception as exc:
+        traceback.print_exc()
+        write(directory / "error.json", {"error": str(exc)})
+        sys.exit(1)
