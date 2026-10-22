@@ -33,7 +33,7 @@ enum LyricFile {
                 continue
             }
             if kind == "lrc" {
-                if line.matchesPattern(#"^\[(?:ar|ti|al|by|offset|length|re|ve):"#, caseInsensitive: true) { continue }
+                if line.matchesPattern(#"^\[(?:ar|ti|al|au|by|offset|length|re|ve|tool|la|lang|id|key|#):"#, caseInsensitive: true) { continue }
                 line = line.replacingPattern(#"\[\d+:\d+(?:[.:]\d+)?\]"#, with: "").replacingPattern(#"<\d+:\d+(?:[.:]\d+)?>"#, with: "")
             }
             if subtitles || kind == "lrc" {
@@ -42,6 +42,20 @@ enum LyricFile {
             if !line.isEmpty || !(result.last?.isEmpty ?? true) { result.append(line) }
         }
         return try checked(result.joined(separator: "\n"))
+    }
+
+    /// A lyric file's text, in whatever encoding it was saved: UTF-8 and UTF-16 first,
+    /// then the legacy encodings subtitle files often use, such as Shift JIS and Windows Latin.
+    static func decode(_ data: Data) -> String? {
+        if let text = String(data: data, encoding: .utf8) { return text }
+        if data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF]), let text = String(data: data, encoding: .utf16) { return text }
+        var converted: NSString?
+        let candidates: [String.Encoding] = [.shiftJIS, .japaneseEUC, .windowsCP1252, .isoLatin1, .utf16]
+        let options: [StringEncodingDetectionOptionsKey: Any] = [
+            .suggestedEncodingsKey: candidates.map(\.rawValue), .allowLossyKey: false,
+        ]
+        let found = NSString.stringEncoding(for: data, encodingOptions: options, convertedString: &converted, usedLossyConversion: nil)
+        return found == 0 ? nil : converted as String?
     }
 
     private static func checked(_ lyrics: String) throws -> String {

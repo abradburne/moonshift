@@ -51,11 +51,15 @@ reharmonize the chorus, write a solo, or adapt the words to a new style; each
 revision renders as a new take.
 
 While Moonshift is open, the server answers at `http://127.0.0.1:8766/mcp`
-(Settings › Agents shows this, with a copy button). For Claude Code:
+to agents that send its token. Settings › Agents shows the command for Claude
+Code with your token filled in, ready to copy:
 
 ```sh
-claude mcp add --transport http moonshift http://127.0.0.1:8766/mcp
+claude mcp add --transport http moonshift http://127.0.0.1:8766/mcp --header "Authorization: Bearer <token>"
 ```
+
+The token stays the same across launches; *New Token* in Settings replaces it
+and disconnects agents added with the old one.
 
 | Tool | What it does |
 | --- | --- |
@@ -69,8 +73,8 @@ claude mcp add --transport http moonshift http://127.0.0.1:8766/mcp
 A score an agent writes replaces the transcription until you choose *Use
 Original Score* in the Score section of the Create screen, where you can also
 read and edit the score yourself. Edits made by an agent appear in the app
-as they happen. The server only answers on this Mac and refuses requests from
-web pages.
+as they happen, alongside any you are making. The server only answers on this
+Mac, only to agents with the token, and refuses requests from web pages.
 
 ## Optional online lookup
 
@@ -136,8 +140,8 @@ Generation itself never downloads anything.
 | `data/` | Your covers, imported songs and takes |
 | `.models`, `.runtime`, `.covers-venv`, `.lookup-venv`, `.cache` | Model weights, the music engine, and Python environments |
 
-The agent endpoint listens only on `127.0.0.1:8766`, refuses requests from web
-pages, and closes with the app.
+The agent endpoint listens only on `127.0.0.1:8766`, needs the token kept in
+`.runtime/agent-token`, refuses requests from web pages, and closes with the app.
 
 ## License
 

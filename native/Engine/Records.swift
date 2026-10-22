@@ -87,6 +87,20 @@ struct Project: Codable, Identifiable, Equatable {
     /// The same cover ignoring fields the library assigns.
     var content: Project { var copy = self; copy.id = ""; copy.updated_at = ""; return copy }
 
+    /// A three-way merge for a cover changed in two places: fields edited `local`ly since
+    /// `base` keep those edits, and every other field takes the `stored` version.
+    static func merge(local: Project, base: Project, stored: Project) -> Project {
+        var result = stored
+        func keep<T: Equatable>(_ field: WritableKeyPath<Project, T>) {
+            if local[keyPath: field] != base[keyPath: field] { result[keyPath: field] = local[keyPath: field] }
+        }
+        keep(\.title); keep(\.style); keep(\.lyrics); keep(\.abc); keep(\.score_edited); keep(\.voice); keep(\.vocal_prompt)
+        keep(\.language); keep(\.cot); keep(\.seed); keep(\.cfg_scale); keep(\.temperature); keep(\.max_tokens); keep(\.ode_steps)
+        keep(\.takes); keep(\.tempo); keep(\.engine); keep(\.nar_chunk_frames); keep(\.cover_source); keep(\.cover_name)
+        keep(\.cover_job); keep(\.app_mode); keep(\.song_title); keep(\.song_artist); keep(\.lyrics_source); keep(\.cover_preset)
+        return result
+    }
+
     /// The limits every save is held to, so a hand-edited file or an agent cannot ask the engine for nonsense.
     func validate() throws {
         func text(_ name: String, _ value: String, _ maximum: Int) throws {
@@ -217,11 +231,16 @@ struct Job: Codable, Identifiable, Equatable {
     var tokens = 0
     var take: Int?
     var phase: String?
+    /// When the current phase began, for the time-remaining estimate.
+    var phase_started_at: String?
     var progress: Double?
     var memory_gib: Double?
     var peak_memory_gib: Double?
     var memory_limit_gib: Double?
     var estimate: RenderEstimate?
+    /// The engine process running now, so one left behind by a crash can be stopped on the next launch.
+    var engine_pid: Int32?
+    var engine_started: UInt64?
     /// A stopped render that can continue from its saved song tokens. Worked out on load, never stored.
     var resumable = false
 
@@ -243,11 +262,14 @@ struct Job: Codable, Identifiable, Equatable {
         tokens = (try? c.decodeIfPresent(Int.self, forKey: .tokens)) ?? 0
         take = try? c.decodeIfPresent(Int.self, forKey: .take)
         phase = try? c.decodeIfPresent(String.self, forKey: .phase)
+        phase_started_at = try? c.decodeIfPresent(String.self, forKey: .phase_started_at)
         progress = try? c.decodeIfPresent(Double.self, forKey: .progress)
         memory_gib = try? c.decodeIfPresent(Double.self, forKey: .memory_gib)
         peak_memory_gib = try? c.decodeIfPresent(Double.self, forKey: .peak_memory_gib)
         memory_limit_gib = try? c.decodeIfPresent(Double.self, forKey: .memory_limit_gib)
         estimate = try? c.decodeIfPresent(RenderEstimate.self, forKey: .estimate)
+        engine_pid = try? c.decodeIfPresent(Int32.self, forKey: .engine_pid)
+        engine_started = try? c.decodeIfPresent(UInt64.self, forKey: .engine_started)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -257,15 +279,17 @@ struct Job: Codable, Identifiable, Equatable {
         try c.encodeIfPresent(finished_at, forKey: .finished_at); try c.encode(request, forKey: .request)
         try c.encode(result, forKey: .result); try c.encode(error, forKey: .error); try c.encode(tokens, forKey: .tokens)
         try c.encodeIfPresent(take, forKey: .take); try c.encodeIfPresent(phase, forKey: .phase)
+        try c.encodeIfPresent(phase_started_at, forKey: .phase_started_at)
         // Unknown progress is stored as null, so the app shows an indeterminate bar.
         try c.encode(progress, forKey: .progress)
         try c.encodeIfPresent(memory_gib, forKey: .memory_gib); try c.encodeIfPresent(peak_memory_gib, forKey: .peak_memory_gib)
         try c.encodeIfPresent(memory_limit_gib, forKey: .memory_limit_gib); try c.encodeIfPresent(estimate, forKey: .estimate)
+        try c.encodeIfPresent(engine_pid, forKey: .engine_pid); try c.encodeIfPresent(engine_started, forKey: .engine_started)
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, status, stage, created_at, started_at, finished_at, request, result, error, tokens, take, phase, progress
-        case memory_gib, peak_memory_gib, memory_limit_gib, estimate
+        case id, status, stage, created_at, started_at, finished_at, request, result, error, tokens, take, phase, phase_started_at, progress
+        case memory_gib, peak_memory_gib, memory_limit_gib, estimate, engine_pid, engine_started
     }
 
     static let activeStatuses: Set<String> = ["queued", "running"]
@@ -275,6 +299,8 @@ struct Job: Codable, Identifiable, Equatable {
     var tracks: [AudioTrack] { result.tracks ?? [] }
     var created: Date? { serviceDate(created_at) }
     var started: Date? { started_at.flatMap(serviceDate) }
+    var finished: Date? { finished_at.flatMap(serviceDate) }
+    var phaseStarted: Date? { phase_started_at.flatMap(serviceDate) }
 }
 
 /// Everything the app lists, and a counter that moves whenever any of it changes.
@@ -289,6 +315,8 @@ struct Health: Equatable {
     var models: [String: Bool]
     var engines: [String: Bool]
     var memory: MemoryState
+    /// Cover and job files in the library that could not be read.
+    var unreadable = 0
 
     var transcriptionReady: Bool { models["covers"] == true }
     var lookupReady: Bool { models["lookup"] == true }
@@ -303,6 +331,8 @@ struct MemoryState: Codable, Equatable {
     var free_gib: Double
     var limit_gib: Double
     var reserve_gib: Double
+    /// The kernel's pressure level when it was read: 1 normal, 2 warning, 4 critical.
+    var pressure: Int? = nil
 }
 
 struct RenderEstimate: Codable, Equatable {

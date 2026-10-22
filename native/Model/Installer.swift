@@ -155,10 +155,17 @@ import Observation
             }
         }
         do {
-            try process.run()
-            self.process = process
-            await withCheckedContinuation { continuation in
+            // The handler is set first: a script that stops at once must still be noticed.
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 process.terminationHandler = { _ in continuation.resume() }
+                do {
+                    try process.run()
+                } catch {
+                    process.terminationHandler = nil
+                    continuation.resume(throwing: error)
+                    return
+                }
+                self.process = process
             }
         } catch {
             failure = error.localizedDescription

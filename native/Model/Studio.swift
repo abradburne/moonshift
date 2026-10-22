@@ -52,8 +52,8 @@ import Observation
     var reviewing: LyricCandidate?
     @ObservationIgnored var lookupToken = UUID()
 
-    /// Covers waiting for their transcription, keyed by that job.
-    private var chains: [String: Project] = [:]
+    /// Covers waiting for a transcription before their take is queued. Covers of the same song share one.
+    private var chains: [(job: String, cover: Project)] = []
     @ObservationIgnored private var saved = Project()
     @ObservationIgnored private var advancing: Set<String> = []
     @ObservationIgnored private var autosave: Task<Void, Never>?
@@ -63,6 +63,8 @@ import Observation
     @ObservationIgnored private var settled: Set<String>?
     @ObservationIgnored private var activity: NSObjectProtocol?
     @ObservationIgnored private var folderAccess: URL?
+    /// The tempo marked in each transcription's score, read once.
+    @ObservationIgnored private var tempos: [String: Double?] = [:]
     #if SNAPSHOT
     @ObservationIgnored private var rehearsed = false
     #endif
@@ -99,7 +101,7 @@ import Observation
     /// Any cover being created, open or not.
     var runningJob: Job? { jobs.last(where: \.active) }
     /// Editing pauses while this cover is being created, so the take matches what you see.
-    var locked: Bool { submitting || importing || activeJob != nil || chains.values.contains { $0.id == project.id } }
+    var locked: Bool { submitting || importing || activeJob != nil || chains.contains { $0.cover.id == project.id } }
     var takes: [Job] { currentJobs.filter { $0.isGeneration && !$0.tracks.isEmpty } }
     /// A stopped or failed attempt worth showing: the most recent job, if it did not finish.
     var setback: Job? {
@@ -113,7 +115,7 @@ import Observation
     }
 
     func isBusy(_ id: String) -> Bool {
-        !id.isEmpty && (jobs.contains { $0.active && $0.request.project.id == id } || chains.values.contains { $0.id == id })
+        !id.isEmpty && (jobs.contains { $0.active && $0.request.project.id == id } || chains.contains { $0.cover.id == id })
     }
 
     func takeCount(_ id: String) -> Int {
@@ -123,6 +125,22 @@ import Observation
     /// A finished transcription of this recording. Covers of the same song share it.
     func transcription(of source: String) -> Job? {
         jobs.first { $0.isTranscription && $0.status == "complete" && $0.request.source == source && !source.isEmpty }
+    }
+
+    /// The tempo heard in the original, once it has been transcribed.
+    func originalTempo(of source: String) -> Double? {
+        guard let job = transcription(of: source) else { return nil }
+        if let known = tempos[job.id] { return known }
+        let mark = job.result.abc?.firstMatch(of: #/(?m)^Q:\s*(?:\d+/\d+\s*=\s*)?(\d+)/#).flatMap { Double($0.1) }
+        tempos[job.id] = mark
+        return mark
+    }
+
+    /// How long the most recent finished take took to make, start to end.
+    var lastTakeSeconds: Double? {
+        jobs.lazy.filter { $0.isGeneration && $0.status == "complete" }
+            .compactMap { job in job.started.flatMap { start in job.finished.map { $0.timeIntervalSince(start) } } }
+            .first { $0 > 0 }
     }
 
     func newProject() -> Project {
@@ -159,11 +177,12 @@ import Observation
             return
         }
         do {
-            health = try service.start()
+            health = try await service.start()
         } catch {
             phase = .offline(error.localizedDescription)
             return
         }
+        service.onChange = { [weak self] in Task { await self?.refresh() } }
         phase = .ready
         await refresh()
         if !hasContent, let recent = projects.first { load(recent) }
@@ -267,24 +286,21 @@ import Observation
         player.pause()
         installer.cancel()
         if isReady { await save() }
-        service.stop()
+        await service.stop()
         folderAccess?.stopAccessingSecurityScopedResource()
     }
 
     // MARK: Staying in sync
 
+    /// The library tells the app when covers and jobs change; this only keeps what is
+    /// installed and how much memory is free up to date.
     private func poll() async {
-        var tick = 0
         while !Task.isCancelled {
-            // Quick while a cover is being made; unhurried otherwise.
-            let pause: Duration = jobs.contains(where: \.active) ? .milliseconds(700) : NSApp.isActive ? .milliseconds(2500) : .seconds(6)
-            try? await Task.sleep(for: pause)
+            try? await Task.sleep(for: NSApp.isActive ? .seconds(5) : .seconds(15))
             if Task.isCancelled { return }
-            await refresh()
-            tick += 1
-            if tick % 4 == 0 { await refreshHealth() }
+            await refreshHealth()
             // Free memory moves with whatever else is open.
-            if step == .create, tick % 2 == 0, NSApp.isActive { await refreshEstimate() }
+            if step == .create, NSApp.isActive { await refreshEstimate() }
         }
     }
 
@@ -295,18 +311,20 @@ import Observation
 
     func refreshHealth() async {
         guard isReady else { return }
-        let value = service.health()
+        let value = await service.health()
         if value != health { health = value }
     }
 
     private func apply(_ state: LibraryState) {
         let covers = state.projects.filter { $0.app_mode == "covers" }
         if covers != projects { projects = covers }
-        // An agent may have edited the open cover. Take its version unless there are unsaved edits here.
-        if !isDirty, saving == nil, let stored = covers.first(where: { $0.id == project.id && !$0.id.isEmpty }),
+        // An agent may have edited the open cover. Its changes are taken, and any unsaved
+        // edits made here at the same time are kept on top of them and saved.
+        if saving == nil, let stored = covers.first(where: { $0.id == project.id && !$0.id.isEmpty }),
            stored.updated_at > saved.updated_at, stored.content != project.content {
+            let merged = isDirty ? Project.merge(local: project, base: saved, stored: stored) : stored
             saved = stored
-            project = stored
+            project = merged
         }
         guard state.jobs != jobs else { return }
         jobs = state.jobs
@@ -486,7 +504,8 @@ import Observation
         if transcription != nil || snapshot.hasEditedScore {
             await generate(snapshot, from: transcription)
         } else if let job = await submit(JobRequest(kind: "transcribe", project: snapshot, source: snapshot.cover_source)) {
-            chains[job.id] = snapshot
+            // An agent or another cover of this song may already be listening to it: this waits for that.
+            chains.append((job.id, snapshot))
         }
     }
 
@@ -517,18 +536,18 @@ import Observation
 
     private func advanceChains() {
         for (id, snapshot) in chains {
-            guard let job = jobs.first(where: { $0.id == id }) else { chains[id] = nil; continue }
+            guard let job = jobs.first(where: { $0.id == id }) else { chains.removeAll { $0.job == id }; continue }
             guard !job.active else { continue }
             if job.status == "complete" {
                 // The cover stays locked until its music job is queued.
-                guard advancing.insert(id).inserted else { continue }
+                guard advancing.insert(snapshot.id).inserted else { continue }
                 Task {
                     await generate(snapshot, from: job)
-                    chains[id] = nil
-                    advancing.remove(id)
+                    chains.removeAll { $0.job == id && $0.cover.id == snapshot.id }
+                    advancing.remove(snapshot.id)
                 }
             } else {
-                chains[id] = nil
+                chains.removeAll { $0.job == id }
             }
         }
     }
@@ -583,7 +602,7 @@ import Observation
     }
 
     func cancel(_ job: Job) async {
-        chains[job.id] = nil
+        chains.removeAll { $0.job == job.id }
         do {
             try service.cancelJob(job.id)
             await refresh()

@@ -18,6 +18,10 @@ await test("subtitle formats keep sung repetition") {
         check(parsed == expected, "\(kind): \(parsed.debugDescription)")
     }
     check(try LyricFile.parse("Hi", extension: ".TXT") == "Hi")
+    check(try LyricFile.parse("[la:en]\n[au:Writer]\n[id:abc]\n[#:note]\n[00:01.00]Words", extension: "lrc") == "Words")
+    check(LyricFile.decode(Data("こんにちは".data(using: .shiftJIS)!)) == "こんにちは")
+    check(LyricFile.decode(Data("Café".data(using: .windowsCP1252)!))?.hasPrefix("Caf") == true)
+    check(LyricFile.decode(Data("Plain".utf8)) == "Plain")
 }
 
 await test("empty, oversized and unsafe lyric files are refused") {
@@ -238,8 +242,51 @@ await test("deleting a cover removes its takes and its unshared recording") {
 await test("jobs running when the app closed are marked interrupted") {
     let library = try temporaryLibrary()
     let job = try library.createJob(JobRequest(kind: "generate", project: song()))
-    library.markInterrupted()
+    library.update(job.id, status: "running") { $0.engine_pid = 4242; $0.engine_started = 99 }
+    let engines = library.markInterrupted()
     check(try library.job(job.id).status == "failed" && (try library.job(job.id).stage) == "Interrupted")
+    check(engines.count == 1 && engines[0].pid == 4242 && engines[0].started == 99)
+    check(try library.job(job.id).engine_pid == nil)
+}
+
+await test("a recording is listened to once, however many ask") {
+    let library = try temporaryLibrary()
+    let source = try imported(library)
+    let first = try library.createJob(JobRequest(kind: "transcribe", project: Project(), source: source))
+    let second = try library.createJob(JobRequest(kind: "transcribe", project: Project(), source: source))
+    check(first.id == second.id && library.jobs.count == 1)
+    try library.cancelJob(first.id)
+    check(try library.createJob(JobRequest(kind: "transcribe", project: Project(), source: source)).id != first.id)
+}
+
+await test("a replaced recording is removed once nothing uses it") {
+    let library = try temporaryLibrary()
+    let old = try imported(library), kept = try imported(library)
+    let cover = try library.save(song { $0.cover_source = kept })
+    library.releaseImport(kept)
+    check(FileManager.default.fileExists(atPath: library.data.appendingPathComponent(kept).path))
+    library.releaseImport(old)
+    check(!FileManager.default.fileExists(atPath: library.data.appendingPathComponent(old).path))
+    _ = try library.createJob(JobRequest(kind: "transcribe", project: cover, source: kept))
+    var moved = cover; moved.cover_source = ""
+    try library.save(moved)
+    library.releaseImport(kept)
+    check(FileManager.default.fileExists(atPath: library.data.appendingPathComponent(kept).path), "a job still uses it")
+}
+
+await test("live progress is shown at once and saved now and then") {
+    let library = try temporaryLibrary()
+    let job = try library.createJob(JobRequest(kind: "generate", project: song()))
+    let file = library.folder(of: job.id).appendingPathComponent("job.json")
+    nonisolated(unsafe) var told = 0
+    library.onChanged = { told += 1 }
+    library.update(job.id, live: true) { $0.tokens = 25; $0.phase = "compose" }
+    library.update(job.id, live: true) { $0.tokens = 50 }
+    check(try library.job(job.id).tokens == 50 && told == 2)
+    check(try library.job(job.id).phase_started_at != nil)
+    check((try String(contentsOf: file, encoding: .utf8)).contains("\"tokens\" : 25"), "the first change is written, the next waits")
+    library.update(job.id, status: "complete")
+    check((try String(contentsOf: file, encoding: .utf8)).contains("\"tokens\" : 50"))
 }
 
 await test("covers written by the Python service still load") {
@@ -294,8 +341,8 @@ await test("engine log lines become progress") {
     check(job(after: "moonwire.progress.semantic 250")?.tokens == 250)
     check(job(after: "yue2.ar.generate.emitted_tokens = 77")?.tokens == 77)
     check(job(after: "moonwire.progress.flow 16")?.progress == 0.5)
-    check(job(after: "Running Decoding audio: 3/4 chunks")?.stage == "Decoding stereo audio")
-    check(job(after: "Running Decoding audio: 3/4 chunks")?.progress == 0.75)
+    check(job(after: "moonwire.progress.vae 750")?.stage == "Decoding stereo audio")
+    check(job(after: "moonwire.progress.vae 750")?.progress == 0.75)
     check(job(after: "loading tensors") == nil)
 }
 
@@ -350,6 +397,19 @@ await test("stopping an engine stops everything it started") {
     try process.stop()
     check(Machine.group(process.pid).isEmpty && Date().timeIntervalSince(started) < 8)
     check(process.wait() != 0)
+}
+
+await test("the kernel's pressure decides when memory is short") {
+    var calm = memory; calm.available_gib = 2; calm.pressure = 1
+    check(!MemoryGuard.strained(calm), "macOS can reclaim more than free plus inactive")
+    calm.available_gib = 1
+    check(MemoryGuard.strained(calm))
+    var warned = memory; warned.available_gib = 2.5; warned.pressure = 2
+    check(MemoryGuard.strained(warned))
+    var critical = memory; critical.pressure = 4
+    check(MemoryGuard.strained(critical))
+    var stalled = MemoryGuard(limit: 21.6)
+    check(stalled.check(used: 3, memory: memory, silence: 300, allowance: 600) == nil, "loading may stay quiet longer")
 }
 
 await test("the guards stop runaway memory and a stalled engine") {
@@ -472,29 +532,61 @@ await test("the agent endpoint answers on the loopback address only") {
     let library = try temporaryLibrary()
     let tools = AgentTools(library: library)
     let port = 18766 + Int.random(in: 0..<1000)
-    let server = try LoopbackServer(port: port) { method, path, body in
+    let token = "0123456789abcdef0123456789abcdef"
+    let server = try LoopbackServer(port: port) { method, path, headers, body in
         guard path == "/mcp" else { return (404, [:], nil) }
         guard method == "POST" else { return (405, ["Allow": "POST"], nil) }
+        guard LoopbackServer.authorized(headers, token: token) else { return (401, [:], nil) }
         let reply = await tools.respond(to: body)
         return (reply.status, [:], reply.body)
     }
     await withCheckedContinuation { ready in server.start { _ in ready.resume() } }
     defer { server.stop() }
-    func send(_ method: String, origin: String? = nil, body: [String: Any]? = nil) async throws -> (Int, [String: Any]?) {
+    func send(_ method: String, origin: String? = nil, type: String = "application/json", bearer: String? = token,
+              body: [String: Any]? = nil) async throws -> (Int, [String: Any]?) {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/mcp")!)
         request.httpMethod = method
         if let origin { request.setValue(origin, forHTTPHeaderField: "Origin") }
-        if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
+        if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
+        if let body {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            request.setValue(type, forHTTPHeaderField: "Content-Type")
+        }
         let (data, response) = try await URLSession.shared.data(for: request)
         return ((response as! HTTPURLResponse).statusCode, try? JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
-    let (status, reply) = try await send("POST", body: ["jsonrpc": "2.0", "id": 7, "method": "ping"])
+    let ping: [String: Any] = ["jsonrpc": "2.0", "id": 7, "method": "ping"]
+    let (status, reply) = try await send("POST", body: ping)
     check(status == 200 && reply?["id"] as? Int == 7)
     expect(try await send("GET").0 == 405)
-    expect(try await send("POST", origin: "https://example.com", body: ["jsonrpc": "2.0", "id": 1, "method": "ping"]).0 == 403)
-    expect(try await send("POST", origin: "http://localhost:\(port)", body: ["jsonrpc": "2.0", "id": 1, "method": "ping"]).0 == 200)
+    expect(try await send("POST", origin: "https://example.com", body: ping).0 == 403)
+    // A page on any local port is still a page.
+    expect(try await send("POST", origin: "http://localhost:3000", body: ping).0 == 403)
+    expect(try await send("POST", type: "text/plain", body: ping).0 == 415)
+    expect(try await send("POST", bearer: nil, body: ping).0 == 401)
+    expect(try await send("POST", bearer: String(token.reversed()), body: ping).0 == 401)
     check(LoopbackServer.Request(method: "POST", path: "/mcp", headers: ["host": "attacker.example:8766"], body: Data()).isLocal == false)
     check(LoopbackServer.Request(method: "POST", path: "/mcp", headers: ["host": "127.0.0.1:8766"], body: Data()).isLocal)
+    check(LoopbackServer.Request(method: "POST", path: "/mcp", headers: ["host": "127.0.0.1:8766", "sec-fetch-site": "same-site"], body: Data()).isLocal == false)
+}
+
+await test("a client that never finishes its request is disconnected") {
+    let port = 18766 + Int.random(in: 1000..<2000)
+    let server = try LoopbackServer(port: port) { _, _, _, _ in (200, [:], nil) }
+    await withCheckedContinuation { ready in server.start { _ in ready.resume() } }
+    defer { server.stop() }
+    let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+    defer { close(socket) }
+    var address = sockaddr_in()
+    address.sin_family = sa_family_t(AF_INET); address.sin_port = in_port_t(UInt16(port).bigEndian); address.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let connected = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+    check(connected == 0)
+    _ = "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n".withCString { send(socket, $0, strlen($0), 0) }
+    var timeout = timeval(tv_sec: 15, tv_usec: 0)
+    setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+    let started = Date()
+    var byte: UInt8 = 0
+    check(recv(socket, &byte, 1, 0) <= 0 && Date().timeIntervalSince(started) < 14, "the server should close the connection")
 }
 
 print(failures == 0 ? "All \(checks) checks passed." : "\(failures) of \(checks) checks failed.")

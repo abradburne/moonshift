@@ -239,22 +239,23 @@ struct AgentTools {
         case "get_cover":
             return describe(try cover(try argument(arguments, "cover_id")), full: true)
         case "create_cover":
-            let source = URL(fileURLWithPath: (try argument(arguments, "audio_path") as String as NSString).expandingTildeInPath)
+            let given = URL(fileURLWithPath: (try argument(arguments, "audio_path") as String as NSString).expandingTildeInPath)
+            let source = given.resolvingSymlinksInPath()
             var directory: ObjCBool = false
-            guard SongLookup.audioExtensions.contains(source.pathExtension.lowercased()),
+            guard SongLookup.audioExtensions.contains(given.pathExtension.lowercased()),
                   FileManager.default.fileExists(atPath: source.path, isDirectory: &directory), !directory.boolValue else {
                 throw ServiceError("Give the path of an existing WAV, FLAC, MP3, AIFF or M4A file.")
             }
-            let relative = try library.importAudio(source)
+            // Read before copying, so a recording that is refused is never copied.
             let found: SongDetails
             do {
-                found = try await details(library.data.appendingPathComponent(relative), source.lastPathComponent)
+                found = try await details(source, given.lastPathComponent)
             } catch {
-                try? FileManager.default.removeItem(at: library.data.appendingPathComponent(relative))
                 throw ServiceError("That recording could not be read, or is longer than 15 minutes.")
             }
+            let relative = try library.importAudio(source)
             var cover = Project()
-            cover.app_mode = "covers"; cover.cover_source = relative; cover.cover_name = source.deletingPathExtension().lastPathComponent
+            cover.app_mode = "covers"; cover.cover_source = relative; cover.cover_name = given.deletingPathExtension().lastPathComponent
             cover.song_title = found.title; cover.song_artist = found.artist
             let title = arguments["title"] as? String ?? ""
             cover.title = !title.isEmpty ? title : !found.title.isEmpty ? found.title : cover.cover_name
@@ -272,6 +273,9 @@ struct AgentTools {
             guard cover.hasSong else { throw ServiceError("This cover has no recording to listen to.") }
             if let heard = transcription(of: cover.cover_source) {
                 return describe(heard).merging(["note": "This recording is already transcribed."]) { $1 }
+            }
+            if let listening = library.jobs.first(where: { $0.isTranscription && $0.active && $0.request.source == cover.cover_source }) {
+                return describe(listening).merging(["note": "This recording is already being transcribed. Follow this job."]) { $1 }
             }
             return describe(try library.createJob(JobRequest(kind: "transcribe", project: cover, source: cover.cover_source)))
         case "create_take":

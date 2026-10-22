@@ -53,6 +53,11 @@ private struct ModelSettings: View {
                 }
                 row("Song identification", "Optional. Names a recording using Shazam", ready: studio.health?.lookupReady) { installingLookup = true }
             }
+            if let unreadable = studio.health?.unreadable, unreadable > 0 {
+                Section {
+                    Callout(text: "\(unreadable) cover or take \(unreadable == 1 ? "file" : "files") in this folder could not be read and \(unreadable == 1 ? "is" : "are") not shown. They are listed in data/moonshift.log.")
+                }
+            }
             Section {
                 LabeledContent("Location") {
                     HStack {
@@ -93,22 +98,43 @@ private struct ModelSettings: View {
 /// How to connect an AI agent to Moonshift over the Model Context Protocol.
 private struct AgentSettings: View {
     var studio: Studio
+    @State private var token = ""
+    @State private var confirmingReset = false
 
     private var address: String { "http://127.0.0.1:\(studio.service.port)/mcp" }
-    private var command: String { "claude mcp add --transport http moonshift \(address)" }
+    private var header: String { "Authorization: Bearer \(token)" }
+    private var command: String { "claude mcp add --transport http moonshift \(address) --header \"\(header)\"" }
 
     var body: some View {
         Form {
+            if let problem = studio.service.agentProblem {
+                Section { Callout(text: problem) }
+            }
             Section {
-                copyable("Address", address)
                 copyable("Claude Code", command)
+                copyable("Address", address)
+                copyable("Header", header)
             } header: {
                 Text("Connect an agent")
             } footer: {
-                Text("An agent that speaks the Model Context Protocol can read your covers, edit their lyrics, style and score, and render takes, while Moonshift is open. The address only answers on this Mac. Changes an agent makes appear here as it makes them.")
+                Text("An agent that speaks the Model Context Protocol can read your covers, edit their lyrics, style and score, and render takes, while Moonshift is open. The address only answers on this Mac, and only to agents that send this token. Changes an agent makes appear here as it makes them.")
+            }
+            Section {
+                Button("New Token…") { confirmingReset = true }
+            } footer: {
+                Text("A new token disconnects every agent added with the old one.")
             }
         }
         .formStyle(.grouped)
+        .onAppear { token = studio.service.agentToken }
+        .confirmationDialog("Make a new agent token?", isPresented: $confirmingReset) {
+            Button("New Token", role: .destructive) {
+                studio.service.resetAgentToken()
+                token = studio.service.agentToken
+            }
+        } message: {
+            Text("Agents added with the current token will need to be added again.")
+        }
     }
 
     private func copyable(_ label: String, _ value: String) -> some View {

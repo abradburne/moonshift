@@ -21,7 +21,14 @@ enum Machine {
         }
         func rounded(_ value: Double) -> Double { (value * 100).rounded() / 100 }
         return MemoryState(total_gib: rounded(total), available_gib: rounded(available), free_gib: rounded(free),
-                           limit_gib: rounded(min(24, total * 0.60)), reserve_gib: min(6.0, total * 0.17))
+                           limit_gib: rounded(min(24, total * 0.60)), reserve_gib: min(6.0, total * 0.17), pressure: pressure)
+    }
+
+    /// The kernel's own memory pressure, as Activity Monitor colours it: 1 normal, 2 warning, 4 critical.
+    static var pressure: Int? {
+        var level: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        return sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0 ? Int(level) : nil
     }
 
     /// Engine threads belong on performance cores; efficiency cores slow them down.
@@ -43,12 +50,6 @@ enum Machine {
         return result == 0 ? usage.ri_phys_footprint : nil
     }
 
-    static func allProcesses() -> [pid_t] {
-        let capacity = Int(proc_listallpids(nil, 0)) + 64
-        var pids = [pid_t](repeating: 0, count: max(capacity, 64))
-        let found = pids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
-        return Array(pids.prefix(Int(max(0, found)))).filter { $0 > 0 }
-    }
 
     static func isZombie(_ pid: pid_t) -> Bool {
         var info = proc_bsdinfo()
@@ -59,7 +60,31 @@ enum Machine {
 
     /// Live members of a process group: an engine and anything it started.
     static func group(_ leader: pid_t) -> [pid_t] {
-        allProcesses().filter { getpgid($0) == leader && !isZombie($0) }
+        var pids = [pid_t](repeating: 0, count: 64)
+        let found = pids.withUnsafeMutableBytes { proc_listpgrppids(leader, $0.baseAddress, Int32($0.count)) }
+        // A zombie waiting to be reaped still lists in its group, but has no group of its own.
+        return pids.prefix(Int(max(0, found))).filter { $0 > 0 && getpgid($0) == leader && !isZombie($0) }
+    }
+
+    /// When a process started, so a recorded pid is not mistaken for a later process that reused it.
+    static func startTime(_ pid: pid_t) -> UInt64? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return info.pbi_start_tvsec
+    }
+
+    /// Stops a whole process group, escalating if the GPU driver ignores termination.
+    /// Throws when something in it survives, so no second model is ever loaded beside it.
+    static func stopGroup(_ leader: pid_t) throws {
+        guard !group(leader).isEmpty else { return }
+        killpg(leader, SIGTERM)
+        for _ in 0..<30 where !group(leader).isEmpty { usleep(100_000) }
+        killpg(leader, SIGKILL)
+        for _ in 0..<50 where !group(leader).isEmpty { usleep(100_000) }
+        if !group(leader).isEmpty {
+            throw ServiceError("A previous engine could not be ejected. Quit Moonshift before starting another model.")
+        }
     }
 
     /// Memory held by a whole process group, in GiB.
@@ -136,16 +161,6 @@ final class ChildProcess: @unchecked Sendable {
 
     var exited: Bool { lock.withLock { exitStatus != nil } }
 
-    /// Stops the whole group, escalating if the GPU driver ignores termination.
-    /// Throws when something in it survives, so no second model is ever loaded beside it.
-    func stop() throws {
-        guard !Machine.group(pid).isEmpty else { return }
-        killpg(pid, SIGTERM)
-        for _ in 0..<30 where !Machine.group(pid).isEmpty { usleep(100_000) }
-        killpg(pid, SIGKILL)
-        for _ in 0..<50 where !Machine.group(pid).isEmpty { usleep(100_000) }
-        if !Machine.group(pid).isEmpty {
-            throw ServiceError("A previous engine could not be ejected. Quit Moonshift before starting another model.")
-        }
-    }
+    /// Stops the whole group. Throws when something in it survives.
+    func stop() throws { try Machine.stopGroup(pid) }
 }

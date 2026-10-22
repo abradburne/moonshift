@@ -41,16 +41,19 @@ extension Studio {
         defer { importing = false }
         let target = project.id
         do {
-            let source = try await service.importAudio(url)
-            guard project.id == target else { return }
+            let (source, details) = try await service.importAudio(url)
+            guard project.id == target else { service.releaseImport(source); return }
             if player.source == project.cover_source { player.stop() }
+            let replaced = project.cover_source
             project.cover_source = source
             project.cover_name = url.deletingPathExtension().lastPathComponent
             // A different recording needs its own score and its own name; typed lyrics stay.
-            project.abc = ""; project.cover_job = ""
+            project.abc = ""; project.cover_job = ""; project.score_edited = false
             project.song_title = ""; project.song_artist = ""
+            songDuration = details.duration ?? 0
             step = .song
-            await save()
+            // The recording it replaces goes, unless a take or another cover still uses it.
+            if await save(), !replaced.isEmpty, replaced != source { service.releaseImport(replaced) }
             await loadSongDetails()
         } catch {
             report(error, title: "This song could not be imported")
@@ -155,7 +158,9 @@ extension Studio {
             let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
             guard size <= 1_000_000 else { throw ServiceError(message: "Choose a lyric file up to 1 MB.") }
             let data = try Data(contentsOf: url)
-            guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
+            guard let text = LyricFile.decode(data) else {
+                throw ServiceError("This file's text encoding could not be recognised. Save it as UTF-8, or paste the words.")
+            }
             let lyrics = try LyricFile.parse(text, extension: url.pathExtension)
             // Keep anything typed while the file was being read.
             guard project.id == target, project.lyrics == before else { return }

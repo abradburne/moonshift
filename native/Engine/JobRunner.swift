@@ -14,6 +14,8 @@ final class JobRunner: @unchecked Sendable {
     /// Set when an engine could not be ejected: no other model may load beside it.
     private var cleanupError: String?
     private var working = 0
+    /// The app is quitting: no new engine may start.
+    private var stopping = false
 
     init(library: Library) {
         self.library = library
@@ -29,6 +31,10 @@ final class JobRunner: @unchecked Sendable {
 
     func enqueue(_ id: String) {
         lock.withLock { working += 1 }
+        // A job queued just after Cancel waits for the cancelled engine to let go of its memory.
+        if let previous = lock.withLock({ current?.job }), (try? library.job(previous))?.status == "cancelled" {
+            library.update(id) { $0.stage = "Stopping the previous engine" }
+        }
         queue.async { [self] in
             run(id)
             lock.withLock { working -= 1 }
@@ -41,9 +47,30 @@ final class JobRunner: @unchecked Sendable {
         DispatchQueue.global().async { try? process.stop() }
     }
 
-    /// The app is quitting: nothing it started may keep running.
+    /// The app is quitting: nothing it started may keep running, and nothing new starts.
+    /// Blocks until the engine is gone, so call it away from the main thread.
     func shutdown() {
+        lock.withLock { stopping = true }
+        for job in library.jobs where job.active {
+            library.update(job.id, status: "cancelled") {
+                $0.stage = "Cancelled"; $0.error = "Stopped when Moonshift quit."; $0.finished_at = timestamp()
+            }
+        }
         if let process = lock.withLock({ current?.process }) { try? process.stop() }
+    }
+
+    /// Stops engines a crash left running, before any job may load another model beside them.
+    func eject(_ engines: [(pid: pid_t, started: UInt64)]) {
+        guard !engines.isEmpty else { return }
+        queue.async { [self] in
+            for engine in engines where Machine.startTime(engine.pid) == engine.started && getpgid(engine.pid) == engine.pid {
+                do {
+                    try Machine.stopGroup(engine.pid)
+                } catch {
+                    lock.withLock { cleanupError = error.localizedDescription }
+                }
+            }
+        }
     }
 
     // MARK: One job
@@ -108,17 +135,26 @@ final class JobRunner: @unchecked Sendable {
     /// music engine, the progress guard watching it. Throws when it fails.
     func launch(_ id: String, _ executable: URL, _ arguments: [String], limit: Double, watchProgress: Bool,
                 log: FileHandle?, onLine: (String, () -> Void) -> Void) throws -> Int32 {
-        guard (try? library.job(id))?.active == true else { throw CancellationError() }
-        let process = try ChildProcess.spawn(executable.path, arguments, environment: paths.environment, directory: paths.code)
-        lock.withLock { current = (id, process) }
+        // Checked under the same lock `shutdown` sets, so quitting between two engines starts neither.
+        let process: ChildProcess = try lock.withLock {
+            guard !stopping, (try? library.job(id))?.active == true else { throw CancellationError() }
+            let process = try ChildProcess.spawn(executable.path, arguments, environment: paths.environment, directory: paths.code)
+            current = (id, process)
+            return process
+        }
         defer { lock.withLock { current = nil } }
+        let started = Machine.startTime(process.pid)
+        library.update(id) { $0.engine_pid = process.pid; $0.engine_started = started }
+        defer { library.update(id) { $0.engine_pid = nil; $0.engine_started = nil } }
         let heartbeat = Heartbeat()
         let monitor = Thread { [self] in watch(id, process, limit: limit, progress: watchProgress ? heartbeat : nil) }
         monitor.start()
         defer { monitor.cancel() }
         process.readLines { line in
             log?.write(Data((line + "\n").utf8))
-            onLine(line) { heartbeat.beat() }
+            // Any output shows the engine is alive: loading and decoding report little else.
+            heartbeat.beat()
+            onLine(line) {}
         }
         let code = process.wait()
         do {
@@ -135,8 +171,11 @@ final class JobRunner: @unchecked Sendable {
     final class Heartbeat: @unchecked Sendable {
         private let lock = NSLock()
         private var last = Date()
-        func beat() { lock.withLock { last = Date() } }
+        private var beats = 0
+        func beat() { lock.withLock { last = Date(); beats += 1 } }
         var silence: TimeInterval { lock.withLock { Date().timeIntervalSince(last) } }
+        /// How long silence may last: loading a model from a slow disk says nothing for a while.
+        var allowance: TimeInterval { lock.withLock { beats == 0 ? 600 : 180 } }
     }
 
     /// The live guards: memory twice a second, and progress for the music engine.
@@ -147,10 +186,10 @@ final class JobRunner: @unchecked Sendable {
             Thread.sleep(forTimeInterval: 0.5)
             guard !Thread.current.isCancelled, !process.exited else { return }
             let used = Machine.groupFootprint(process.pid)
-            let verdict = guardian.check(used: used, memory: library.memory(), silence: progress?.silence)
-            // The guard samples twice a second; the job file only needs visible changes.
+            let verdict = guardian.check(used: used, memory: library.memory(), silence: progress?.silence, allowance: progress?.allowance ?? 180)
+            // The guard samples twice a second; the job only needs visible changes.
             if verdict != nil || reported == nil || abs(used - reported!.gib) >= 0.1 || Date().timeIntervalSince(reported!.at) > 5 {
-                library.update(id) {
+                library.update(id, live: true) {
                     $0.memory_gib = (used * 100).rounded() / 100; $0.peak_memory_gib = (guardian.peak * 100).rounded() / 100
                     $0.memory_limit_gib = (limit * 100).rounded() / 100
                 }
@@ -190,7 +229,7 @@ final class JobRunner: @unchecked Sendable {
 
     /// Progress the transcription helper reports.
     private func apply(_ event: [String: Any], to id: String) {
-        library.update(id) { job in
+        library.update(id, live: true) { job in
             if let stage = event["stage"] as? String { job.stage = stage }
             if let phase = event["phase"] as? String { job.phase = phase }
             if event.keys.contains("progress") { job.progress = event["progress"] as? Double }
@@ -208,17 +247,25 @@ struct MemoryGuard {
 
     init(limit: Double) { self.limit = limit }
 
-    mutating func check(used: Double, memory: MemoryState, silence: TimeInterval?) -> (stage: String, message: String)? {
+    mutating func check(used: Double, memory: MemoryState, silence: TimeInterval?, allowance: TimeInterval = 180) -> (stage: String, message: String)? {
         peak = max(peak, used)
-        pressure = memory.available_gib < 3 ? pressure + 1 : 0
+        pressure = Self.strained(memory) ? pressure + 1 : 0
         if used > limit || pressure >= 3 {
             return ("Memory guard", String(format: "Memory guard stopped this job at %.1f GB (limit %.1f GB, %.1f GB available). Try 4-bit, a shorter length, or close other heavy apps.",
                                            used, limit, memory.available_gib))
         }
-        if let silence, silence > 180 {
+        if let silence, silence > allowance {
             return ("Progress guard", "The music engine made no progress for three minutes and was stopped. The song it wrote is saved: resume rendering in sections to finish it.")
         }
         return nil
+    }
+
+    /// The Mac is about to start swapping hard. Free plus inactive memory undercounts
+    /// what macOS can reclaim (a mapped model's pages, for one), so the kernel's own
+    /// pressure level decides when it is known, with a hard floor beneath it.
+    static func strained(_ memory: MemoryState) -> Bool {
+        guard let level = memory.pressure else { return memory.available_gib < 3 }
+        return level >= 4 || (level >= 2 && memory.available_gib < 3) || memory.available_gib < 1.5
     }
 }
 

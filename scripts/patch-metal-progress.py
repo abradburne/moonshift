@@ -42,3 +42,6 @@ replace_once(root / "src/models/yue2/nar_runtime.cpp", "moonwire.progress.flow",
             }
             engine::debug::timing_log_scalar("moonwire.progress.flow", step + 1);
 ''')
+replace_once(root / "src/models/yue2/pipeline.cpp", "moonwire.progress.vae", "            ++tiles;\n", '''            ++tiles;
+            engine::debug::timing_log_scalar("moonwire.progress.vae", start + core_frames >= frames ? 1000 : (start + core_frames) * 1000 / frames);
+''')

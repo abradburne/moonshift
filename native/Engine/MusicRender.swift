@@ -91,7 +91,6 @@ struct MusicRender {
                                         e2e_seconds: Date().timeIntervalSince(started))
             try write(metadata, to: out.appendingPathComponent("metadata.json"))
             // Completed takes are kept if a later take fails or is cancelled.
-            try write(["tracks": tracks], to: folder.appendingPathComponent("partial.json"))
             let finished = tracks
             library.update(id) { $0.result = JobResult(tracks: finished) }
         }
@@ -131,7 +130,7 @@ struct MusicRender {
             tail = Array((tail + [line.trimmed]).suffix(12))
             if let change = Self.progress(in: line, project: project) {
                 beat()
-                library.update(id, change)
+                library.update(id, live: true, change)
             }
         }
         guard (try? library.job(id))?.active == true else { throw CancellationError() }
@@ -157,11 +156,9 @@ struct MusicRender {
             let share = min(1, Double(step) / Double(project.ode_steps))
             return { $0.stage = "Rendering acoustic detail"; $0.phase = "render"; $0.progress = share }
         }
-        if let groups = line.captures(#"Running (Synthesizing audio|Decoding audio): (\d+)/(\d+) (steps|chunks)"#),
-           let done = Double(groups[1]), let total = Double(groups[2]) {
-            let decoding = groups[0] == "Decoding audio"
-            let share = min(1, done / max(1, total))
-            return { $0.stage = decoding ? "Decoding stereo audio" : "Rendering acoustic detail"; $0.phase = decoding ? "finish" : "render"; $0.progress = share }
+        // Decoding a long song in tiles reports each one, in thousandths of the whole.
+        if let permille = line.firstCapture(#"moonwire\.progress\.vae\s+(\d+)"#).flatMap({ Double($0) }) {
+            return { $0.stage = "Decoding stereo audio"; $0.phase = "finish"; $0.progress = min(1, permille / 1000) }
         }
         return nil
     }

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// The local engine, inside the app: the library of covers and jobs, the runner
 /// that makes them, and the endpoint agents reach them through.
@@ -15,9 +16,14 @@ import Foundation
     private(set) var library: Library?
     private var runner: JobRunner?
     private var agents: LoopbackServer?
+    /// Held while this copy answers agents, so a second copy of Moonshift cannot share the port.
+    private var agentLock: Int32 = -1
     private var seen: Int?
     /// Why agents cannot connect, when the port is taken.
     private(set) var agentProblem: String?
+    /// Called on the main actor soon after a cover or job changes.
+    var onChange: (() -> Void)?
+    private var changePending = false
 
     init() {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -57,26 +63,90 @@ import Foundation
 
     // MARK: Lifecycle
 
-    /// Opens the library and starts the runner and the agent endpoint.
-    func start() throws -> Health {
+    /// Opens the library, away from the main thread, and starts the runner and the agent endpoint.
+    func start() async throws -> Health {
         if library == nil {
-            let library = try Library(paths: paths)
-            library.markInterrupted()
+            let paths = paths
+            let (library, orphans) = try await Task.detached(priority: .userInitiated) {
+                let library = try Library(paths: paths)
+                return (library, library.markInterrupted())
+            }.value
             let runner = JobRunner(library: library)
+            runner.eject(orphans)
+            library.onChanged = { [weak self] in Task { @MainActor in self?.changed() } }
             self.library = library
             self.runner = runner
+            for file in library.unreadable { note("Could not read \(file); it is left as it is.") }
             startAgents(library)
         }
         seen = nil
-        return health()
+        return await health()
+    }
+
+    /// Changes arrive in bursts while a cover renders; the app hears about them a few times a second at most.
+    private func changed() {
+        guard !changePending else { return }
+        changePending = true
+        Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            changePending = false
+            onChange?()
+        }
+    }
+
+    // MARK: Agents
+
+    /// What an agent must send as `Authorization: Bearer …`. Kept in the library folder,
+    /// readable only by this user, so a connected agent keeps working across launches.
+    var agentToken: String { token.value }
+    /// Read by the agent endpoint off the main thread.
+    private let token = SharedText()
+    private var tokenFile: URL { root.appendingPathComponent(".runtime/agent-token") }
+
+    private func loadAgentToken() {
+        if let stored = try? String(contentsOf: tokenFile, encoding: .utf8).trimmed, stored.count >= 32 {
+            token.value = stored
+        } else {
+            resetAgentToken()
+        }
+    }
+
+    /// A new token: agents connected with the old one must be added again.
+    func resetAgentToken() {
+        var bytes = [UInt8](repeating: 0, count: 24)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        token.value = bytes.map { String(format: "%02x", $0) }.joined()
+        try? FileManager.default.createDirectory(at: tokenFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: tokenFile.path, contents: Data(agentToken.utf8), attributes: [.posixPermissions: 0o600])
+    }
+
+    /// One copy of Moonshift answers agents; a second would split their requests between two libraries.
+    private func claimAgentPort() -> Bool {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("moonshift-agents-\(port).lock")
+        let descriptor = Darwin.open(file.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { return true }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { close(descriptor); return false }
+        agentLock = descriptor
+        return true
     }
 
     private func startAgents(_ library: Library) {
+        guard claimAgentPort() else {
+            agentProblem = "Agents cannot connect to this copy: another copy of Moonshift is already answering them on port \(port)."
+            note(agentProblem ?? "")
+            return
+        }
+        loadAgentToken()
         let tools = AgentTools(library: library)
+        let token = token
         do {
-            let server = try LoopbackServer(port: port) { method, path, body in
+            let server = try LoopbackServer(port: port) { method, path, headers, body in
                 guard path == "/mcp" else { return (404, [:], nil) }
                 guard method == "POST" else { return (405, ["Allow": "POST"], nil) }
+                guard LoopbackServer.authorized(headers, token: token.value) else {
+                    let refusal = #"{"jsonrpc":"2.0","id":null,"error":{"code":-32001,"message":"Moonshift needs its agent token. Copy the command in Moonshift › Settings › Agents."}}"#
+                    return (401, ["Content-Type": "application/json", "WWW-Authenticate": "Bearer"], Data(refusal.utf8))
+                }
                 let reply = await tools.respond(to: body)
                 return (reply.status, reply.body == nil ? [:] : ["Content-Type": "application/json"], reply.body)
             }
@@ -95,9 +165,11 @@ import Foundation
     }
 
     /// Stops whatever is running: the app is quitting, and nothing it started may outlive it.
-    func stop() {
+    /// Ejecting an engine can take seconds, so it happens away from the main thread.
+    func stop() async {
         agents?.stop()
-        runner?.shutdown()
+        guard let runner else { return }
+        await Task.detached { runner.shutdown() }.value
     }
 
     private func note(_ line: String) {
@@ -113,11 +185,15 @@ import Foundation
         return library
     }
 
-    func health() -> Health {
+    /// What is installed and how much memory is free, read away from the main thread.
+    func health() async -> Health {
         let paths = paths
-        return Health(root: paths.root.path, models: ["covers": paths.coversInstalled, "lookup": paths.lookupInstalled],
-                      engines: Dictionary(uniqueKeysWithValues: Quality.allCases.map { ($0.rawValue, paths.installed($0.rawValue)) }),
-                      memory: library?.memory() ?? Machine.memory())
+        let library = library
+        return await Task.detached {
+            Health(root: paths.root.path, models: ["covers": paths.coversInstalled, "lookup": paths.lookupInstalled],
+                   engines: Dictionary(uniqueKeysWithValues: Quality.allCases.map { ($0.rawValue, paths.installed($0.rawValue)) }),
+                   memory: library?.memory() ?? Machine.memory(), unreadable: library?.unreadable.count ?? 0)
+        }.value
     }
 
     /// Covers and jobs, or nil when nothing changed since the last call.
@@ -134,11 +210,15 @@ import Foundation
     func createJob(_ request: JobRequest) throws -> Job { try open().createJob(request) }
     func cancelJob(_ id: String) throws { try open().cancelJob(id) }
     func deleteJob(_ id: String) throws { try open().deleteJob(id) }
+    func releaseImport(_ source: String) { library?.releaseImport(source) }
 
-    /// Copies a recording into the library, away from the main thread, and returns its path there.
-    func importAudio(_ url: URL) async throws -> String {
+    /// Checks a recording can be read and is short enough, then copies it into the
+    /// library away from the main thread. Returns its path there and what it is.
+    func importAudio(_ url: URL) async throws -> (source: String, details: SongDetails) {
         let library = try open()
-        return try await Task.detached(priority: .userInitiated) { try library.importAudio(url) }.value
+        let details = try await SongLookup.details(of: url.resolvingSymlinksInPath(), name: url.lastPathComponent)
+        let source = try await Task.detached(priority: .userInitiated) { try library.importAudio(url) }.value
+        return (source, details)
     }
 
     func details(_ source: String, name: String) async throws -> SongDetails {
@@ -148,6 +228,16 @@ import Foundation
     func identify(_ source: String) async throws -> SongDetails {
         let file = try open().resolve(source)
         return try await SongLookup.identify(file, paths: paths)
+    }
+}
+
+/// A string several threads read and one writes.
+final class SharedText: @unchecked Sendable {
+    private let lock = NSLock()
+    private var text = ""
+    var value: String {
+        get { lock.withLock { text } }
+        set { lock.withLock { text = newValue } }
     }
 }
 

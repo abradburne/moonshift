@@ -107,15 +107,8 @@ struct CreateStep: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The tempo heard in the original, once it has been transcribed.
-    private var originalBPM: Double? {
-        guard let score = studio.transcription(of: studio.project.cover_source)?.result.abc,
-              let mark = score.firstMatch(of: #/(?m)^Q:\s*(?:\d+/\d+\s*=\s*)?(\d+)/#) else { return nil }
-        return Double(mark.1)
-    }
-
     private var tempoNote: String {
-        guard let bpm = originalBPM else { return studio.project.tempoLabel }
+        guard let bpm = studio.originalTempo(of: studio.project.cover_source) else { return studio.project.tempoLabel }
         let new = Int((bpm * studio.project.tempo).rounded())
         return studio.project.tempo == 1 ? "Original tempo · \(Int(bpm)) BPM" : "\(studio.project.tempoLabel) · \(Int(bpm)) → \(new) BPM"
     }
@@ -197,7 +190,7 @@ private struct JobProgressCard: View {
                     ProgressView().progressViewStyle(.linear).tint(Theme.accent)
                 }
                 HStack {
-                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                    Text([detail, remaining].compactMap { $0 }.joined(separator: " ")).font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("Cancel") { Task { await studio.cancel(job) } }.buttonStyle(.quiet).controlSize(.small)
                 }
@@ -210,6 +203,19 @@ private struct JobProgressCard: View {
     private var headline: String {
         if waiting { return job.stage == "Queued" ? "Waiting for its turn" : job.stage }
         return job.stage.isEmpty ? "Working" : job.stage
+    }
+
+    /// Time left in this step, from how fast it has gone so far; before that is known, how long the last take took.
+    private var remaining: String? {
+        guard !waiting else { return nil }
+        if let progress = job.progress, progress >= 0.05, progress < 1, let since = job.phaseStarted {
+            let left = Date().timeIntervalSince(since) * (1 - progress) / progress
+            // Writing is measured against the length limit, and a song usually ends before it.
+            let bound = job.phase == "compose" ? "At most" : "About"
+            return left < 60 ? "Under a minute left in this step." : "\(bound) \(Int((left / 60).rounded(.up))) min left in this step."
+        }
+        guard !job.isTranscription, let last = studio.lastTakeSeconds else { return nil }
+        return "The last take took about \(max(1, Int((last / 60).rounded()))) min."
     }
 
     private var detail: String {
@@ -248,7 +254,7 @@ private struct SetbackCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Callout(text: job.status == "cancelled" ? "The last attempt was cancelled." : job.error.isEmpty ? "The last attempt did not finish." : job.error)
+            Callout(text: !job.error.isEmpty ? job.error : job.status == "cancelled" ? "The last attempt was cancelled." : "The last attempt did not finish.")
             if job.resumable {
                 HStack {
                     Text("The song it wrote was saved, so only the audio needs rendering.").font(.caption).foregroundStyle(.secondary)
