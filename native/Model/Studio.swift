@@ -23,6 +23,7 @@ import Observation
     let player = Player()
     let presets: PresetStore
     let installer: Installer
+    let updater: Updater
 
     private(set) var phase = Phase.starting
     var showsOnboarding = false
@@ -73,10 +74,19 @@ import Observation
         Self.adoptEarlierSettings()
         presets = PresetStore()
         installer = Installer(root: service.root, scripts: service.code.appendingPathComponent("scripts"), helpers: service.isPackaged ? service.helpers : nil)
+        updater = Updater(enabled: service.isPackaged)
         onlineLookup = UserDefaults.standard.bool(forKey: "CoverOnlineLookup")
         let fresh = newProject()
         saved = fresh
         project = fresh
+        updater.start()
+    }
+
+    /// An update cannot replace the app while it is making a cover or installing models.
+    var updateBlocker: String? {
+        if runningJob != nil { return "Available once the cover being made is finished." }
+        if installer.running { return "Available once setup has finished." }
+        return nil
     }
 
     /// Builds before 1.0 kept presets and preferences under other identifiers.

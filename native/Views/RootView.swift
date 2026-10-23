@@ -32,6 +32,9 @@ struct RootView: View {
         .background(Theme.background)
         .tint(Theme.accent)
         .preferredColorScheme(.dark)
+        .sheet(isPresented: Binding(get: { studio.updater.presenting }, set: { if !$0 { studio.updater.dismiss() } })) {
+            UpdateSheet(studio: studio)
+        }
         .alert(studio.notice?.title ?? "", isPresented: Binding(get: { studio.notice != nil }, set: { if !$0 { studio.notice = nil } })) {
             Button("OK") { studio.notice = nil }
         } message: {

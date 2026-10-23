@@ -589,5 +589,21 @@ await test("a client that never finishes its request is disconnected") {
     check(recv(socket, &byte, 1, 0) <= 0 && Date().timeIntervalSince(started) < 14, "the server should close the connection")
 }
 
+// MARK: Updates
+
+await test("only a later version is offered") {
+    check(UpdateFeed.isNewer("1.3.0", than: "1.2.0") && UpdateFeed.isNewer("1.10.0", than: "1.9.2") && UpdateFeed.isNewer("2", than: "1.9"))
+    check(!UpdateFeed.isNewer("1.2.0", than: "1.2.0") && !UpdateFeed.isNewer("1.2", than: "1.2.0") && !UpdateFeed.isNewer("1.1.9", than: "1.2.0"))
+    let json = #"{"tag_name": "v1.3.0", "html_url": "https://github.com/x", "body": "Notes", "assets": [{"name": "notes.txt", "browser_download_url": "a"}, {"name": "Moonshift-1.3.0.dmg", "browser_download_url": "b", "size": 3}]}"#
+    let release = try JSONDecoder().decode(UpdateFeed.Release.self, from: Data(json.utf8))
+    check(release.version == "1.3.0" && release.image?.browser_download_url == "b")
+}
+
+await test("an update must be Moonshift, signed by its developer and notarized") {
+    // Apple's own tools are signed and notarized, but are not Moonshift.
+    checkThrows({ try UpdateFeed.verify(URL(fileURLWithPath: "/System/Applications/Calculator.app")) }, containing: "not signed and notarized")
+    checkThrows { try UpdateFeed.verify(FileManager.default.temporaryDirectory.appendingPathComponent("missing.app")) }
+}
+
 print(failures == 0 ? "All \(checks) checks passed." : "\(failures) of \(checks) checks failed.")
 exit(failures == 0 ? 0 : 1)

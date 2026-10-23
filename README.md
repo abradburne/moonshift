@@ -85,6 +85,15 @@ be wrong, so lyrics are shown for review before they replace anything, and
 their source is saved with the cover. Recordings and covers are never uploaded,
 and with lookup off the app works offline once the models are installed.
 
+## Updates
+
+The downloaded app checks GitHub for a newer release about once a day, sending
+only its version. When there is one, it shows what changed and offers *Install
+and Relaunch*; it installs only a build signed and notarized for Moonshift, and
+never while a cover is being made. *Moonshift › Check for Updates…* checks at
+any time, and Settings › General turns the daily check off. A build made from a
+checkout does not update itself.
+
 ## Build
 
 Requires Apple Silicon, macOS 14 or later, and Xcode 26 or later (for the Icon

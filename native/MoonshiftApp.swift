@@ -42,6 +42,11 @@ import SwiftUI
         }
         .defaultSize(width: 1120, height: 800)
         .commands {
+            if studio.updater.enabled {
+                CommandGroup(after: .appInfo) {
+                    Button("Check for Updates…") { Task { await studio.updater.check() } }
+                }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New Cover") { Task { await studio.newCover() } }
                     .keyboardShortcut("n").disabled(!studio.isReady)

@@ -74,7 +74,7 @@ enum SongLookup {
         address.queryItems = [URLQueryItem(name: "track_name", value: title.trimmed)]
         if !artist.trimmed.isEmpty { address.queryItems?.append(URLQueryItem(name: "artist_name", value: artist.trimmed)) }
         var request = URLRequest(url: address.url!, timeoutInterval: 15)
-        request.setValue("Moonshift/1.1 (personal local music app)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Moonshift/1.3 (personal local music app)", forHTTPHeaderField: "User-Agent")
         let unavailable = ServiceError("The lyric service is unavailable. Try later, import a lyric file, or paste the words.")
         guard let (data, response) = try? await URLSession.shared.data(for: request) else { throw unavailable }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw unavailable }

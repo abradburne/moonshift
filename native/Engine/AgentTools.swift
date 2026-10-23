@@ -101,7 +101,7 @@ struct AgentTools {
             let asked = params["protocolVersion"] as? String ?? ""
             return result(["protocolVersion": ["2024-11-05", "2025-03-26", Self.protocolVersion].contains(asked) ? asked : Self.protocolVersion,
                            "capabilities": ["tools": [String: Any]()],
-                           "serverInfo": ["name": "moonshift", "title": "Moonshift", "version": "1.1.0"],
+                           "serverInfo": ["name": "moonshift", "title": "Moonshift", "version": "1.3.0"],
                            "instructions": Self.instructions])
         case "ping":
             return result([String: Any]())

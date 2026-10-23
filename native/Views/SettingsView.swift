@@ -34,6 +34,16 @@ private struct GeneralSettings: View {
             } footer: {
                 Text("When on, Moonshift can send a song's title and artist to LRCLIB to find lyrics, and a short audio fingerprint to Shazam to name a recording. Your recordings and covers never leave your Mac.")
             }
+            if studio.updater.enabled {
+                Section {
+                    Toggle("Check for updates automatically", isOn: Binding(get: { studio.updater.automatic }, set: { studio.updater.automatic = $0 }))
+                    LabeledContent("Version \(studio.updater.current)") {
+                        Button("Check Now") { Task { await studio.updater.check() } }
+                    }
+                } footer: {
+                    Text("About once a day, Moonshift asks GitHub for its latest release. Only the app's version is sent. Updates are installed when you choose, and only if they are signed and notarized for Moonshift.")
+                }
+            }
         }
         .formStyle(.grouped)
     }

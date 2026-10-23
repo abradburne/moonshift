@@ -23,7 +23,7 @@ set -euo pipefail
 cd "${0:A:h:h}"
 identity=${MOONSHIFT_SIGN_IDENTITY:-Developer ID Application: XenoCode Inc (HVUXZ635F3)}
 profile=${MOONSHIFT_ASC_PROFILE:-XenoCode}
-version=1.2.0
+version=1.3.0
 name=Moonshift
 flags=(-O -wmo)
 notarize=false
