@@ -75,6 +75,48 @@ def melody_preview(midi_bytes, path):
     return audio, rate
 
 
+def forgive_short_notes(notation):
+    """SheetSage2 gives up on a whole score when one note, chord or key change is
+    shorter than its rhythm grid, or two notes land on each other: a 38 ms note
+    cut off by the end of a recording was enough. A note too short for the grid
+    is left out and a held note ends where the next begins, as a singer's would,
+    so the rest of the song is kept."""
+    import numpy as np
+
+    def notes_to_arr(notes, subbeat_times, voice_id):
+        result = np.zeros(len(subbeat_times), dtype=np.int32)
+        boundaries = notation._subbeat_boundaries(subbeat_times)
+        last = len(result) - 1
+        for note in sorted(notes, key=lambda item: (item.start, item.end, item.pitch)):
+            start = min(max(int(np.searchsorted(boundaries, note.start)), 0), last)
+            end = min(max(int(np.searchsorted(boundaries, note.end)), 0), last)
+            if end <= start or result[start] % 2:
+                continue
+            # A note still sounding here stops for this one.
+            held = start
+            while held <= last and result[held] and not (held > start and result[held] % 2):
+                result[held] = 0
+                held += 1
+            sustain = note.pitch * 2 + 2
+            result[start:end] = sustain
+            result[start] = sustain + 1
+        return result
+
+    def fill_intervals(rows, subbeat_times, *, default, dtype):
+        result = np.full(len(subbeat_times), default, dtype=dtype)
+        last = len(result) - 1
+        for start, end, value in rows:
+            first = min(max(notation._quantize_time(start, subbeat_times), 0), last)
+            until = min(max(notation._quantize_time(end, subbeat_times), 0), last)
+            result[first:until] = value
+        if len(result) > 1:
+            result[-1] = result[-2]
+        return result
+
+    notation._notes_to_arr = notes_to_arr
+    notation._fill_intervals = fill_intervals
+
+
 def transcribe(request, directory):
     from .audio import duration_within_limit, probe
     source = (DATA / request["source"]).resolve()
@@ -89,6 +131,8 @@ def transcribe(request, directory):
     sys.path.insert(0, str(ROOT / ".models"))
     from SheetSage2.modeling_sheetsage2 import SheetSage2Model
     from SheetSage2.exports_sheetsage2 import export_result
+    from SheetSage2 import notation_sheetsage2
+    forgive_short_notes(notation_sheetsage2)
     torch.set_num_threads(performance_cores())
     event(stage="Loading the transcription model")
     model = SheetSage2Model.from_pretrained(
