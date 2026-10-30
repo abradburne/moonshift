@@ -4,6 +4,7 @@ import SwiftUI
 struct StyleStep: View {
     @Bindable var studio: Studio
     @State private var naming: PresetName?
+    @AppStorage("ShowsAllPresets") private var showsAllPresets = false
 
     /// A preset being named: a new one, or an existing one being renamed.
     struct PresetName: Identifiable {
@@ -40,31 +41,59 @@ struct StyleStep: View {
 
     private var presets: some View {
         let selected = studio.selectedPreset
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 158), spacing: 10)], spacing: 10) {
-            ForEach(studio.presets.presets) { preset in
-                Button { choose(preset) } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: preset.symbol).font(.system(size: 15)).frame(width: 22)
-                            .foregroundStyle(selected == preset ? Theme.accent : .secondary)
-                        Text(preset.name).fontWeight(.medium).lineLimit(1)
-                        Spacer(minLength: 0)
+        let essentials = CoverPreset.families[0], more = CoverPreset.families.dropFirst()
+        var sections = [(title: essentials.title, presets: studio.presets.presets(in: essentials))]
+        if !studio.presets.custom.isEmpty { sections.append(("Your presets", studio.presets.custom)) }
+        if showsAllPresets {
+            sections += more.map { ($0.title, studio.presets.presets(in: $0)) }
+        } else if let selected, !sections.contains(where: { $0.presets.contains(selected) }) {
+            // A preset picked from a tucked-away family stays in view.
+            sections[0].presets.append(selected)
+        }
+        return VStack(alignment: .leading, spacing: 18) {
+            ForEach(sections, id: \.title) { section in
+                VStack(alignment: .leading, spacing: 8) {
+                    if sections.count > 1 {
+                        Text(section.title).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
                     }
-                    .padding(.horizontal, 12).frame(height: 44)
-                }
-                .buttonStyle(TileButtonStyle(selected: selected == preset))
-                .contextMenu {
-                    Button("Rename…", systemImage: "pencil") { naming = PresetName(existing: preset, text: preset.name) }
-                    Button("Update with Current Style", systemImage: "arrow.triangle.2.circlepath") {
-                        studio.project.cover_preset = studio.presets.save(name: preset.name, from: studio.project, replacing: preset.id).name
-                    }
-                    .disabled(selected == preset || !studio.project.hasStyle)
-                    if preset.isBuiltin {
-                        Button("Restore Original", systemImage: "arrow.uturn.backward") { studio.presets.remove(preset) }
-                            .disabled(!studio.presets.isModified(preset))
-                    } else {
-                        Button("Delete", systemImage: "trash", role: .destructive) { studio.presets.remove(preset) }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 158), spacing: 10)], spacing: 10) {
+                        ForEach(section.presets) { presetTile($0, selected: $0 == selected) }
                     }
                 }
+            }
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) { showsAllPresets.toggle() }
+            } label: {
+                Label(showsAllPresets ? "Fewer styles" : "\(more.reduce(0) { $0 + $1.presets.count }) more styles",
+                      systemImage: showsAllPresets ? "chevron.up" : "chevron.down")
+            }
+            .buttonStyle(.quiet)
+        }
+    }
+
+    private func presetTile(_ preset: CoverPreset, selected: Bool) -> some View {
+        let color = preset.color ?? Theme.accent
+        return Button { choose(preset) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: preset.symbol).font(.system(size: 12)).foregroundStyle(color)
+                    .frame(width: 26, height: 26).background(color.opacity(0.16), in: Circle())
+                Text(preset.name).fontWeight(.medium).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 9).frame(height: 44)
+        }
+        .buttonStyle(TileButtonStyle(selected: selected, tint: color))
+        .contextMenu {
+            Button("Rename…", systemImage: "pencil") { naming = PresetName(existing: preset, text: preset.name) }
+            Button("Update with Current Style", systemImage: "arrow.triangle.2.circlepath") {
+                studio.project.cover_preset = studio.presets.save(name: preset.name, from: studio.project, replacing: preset.id).name
+            }
+            .disabled(selected || !studio.project.hasStyle)
+            if preset.isBuiltin {
+                Button("Restore Original", systemImage: "arrow.uturn.backward") { studio.presets.remove(preset) }
+                    .disabled(!studio.presets.isModified(preset))
+            } else {
+                Button("Delete", systemImage: "trash", role: .destructive) { studio.presets.remove(preset) }
             }
         }
     }
