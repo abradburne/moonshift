@@ -346,6 +346,18 @@ private struct TakeCard: View {
                     Divider()
                     Button("Use This Style Again", systemImage: "arrow.uturn.backward") { studio.reuseSettings(of: job) }.disabled(studio.locked)
                     Button("Reuse Seed and Settings", systemImage: "dice") { studio.reuseSeed(of: track, in: job) }.disabled(studio.locked)
+                    if track.truncated {
+                        Menu("Extend", systemImage: "arrow.right.to.line") {
+                            ForEach(CoverLength.allCases.filter { $0.rawValue > snapshot.max_tokens }) { length in
+                                Button("\(length.name), \(length.limit)") { Task { await studio.extend(track, of: job, to: length) } }
+                            }
+                        }
+                        .disabled(studio.locked || snapshot.max_tokens >= CoverLength.extended.rawValue)
+                    }
+                    if snapshot.quality == .standard {
+                        Button("Render Again in 8-bit", systemImage: "waveform.badge.plus") { Task { await studio.rerender(track, of: job, at: .high) } }
+                            .disabled(studio.locked || studio.health?.ready(.high) != true)
+                    }
                     Divider()
                     Button("Delete Take…", systemImage: "trash", role: .destructive) { confirmingDelete = true }
                 } label: {
@@ -373,6 +385,7 @@ private struct TakeCard: View {
         var parts = [clockText(track.duration), snapshot.quality.bits, snapshot.keepsHarmony ? "Melody and harmony" : "Melody"]
         if snapshot.tempo != 1 { parts.append(snapshot.tempoLabel) }
         if let voice = Voice.named(snapshot.voice) { parts.append(voice.name) }
+        if !job.request.resume_from.isEmpty { parts.append(job.request.continuing ? "Extended" : "Rendered again") }
         if let created = job.created { parts.append(created.friendly) }
         parts.append("Seed \(track.seed)")
         return parts.joined(separator: " · ")

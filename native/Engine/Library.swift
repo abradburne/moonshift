@@ -221,14 +221,24 @@ final class Library: @unchecked Sendable {
         if request.project.hasSong { _ = try resolve(request.project.cover_source) }
         if !request.resume_from.isEmpty {
             let prior = try job(request.resume_from)
-            guard FileManager.default.fileExists(atPath: folder(of: prior.id).appendingPathComponent("take-1/semantic-prefix.json").path) else {
+            let saved = folder(of: prior.id).appendingPathComponent("take-\(request.resume_take)/semantic-prefix.json")
+            guard FileManager.default.fileExists(atPath: saved.path) else {
                 throw ServiceError("This job has no saved song to resume.")
             }
             let (was, now) = (prior.request.project, request.project)
-            let same = was.lyrics == now.lyrics && was.style == now.style && was.abc == now.abc && was.tempo == now.tempo
+            // The words and music the saved song was written to, which writing on from it must keep.
+            let music = was.lyrics == now.lyrics && was.style == now.style && was.abc == now.abc && was.tempo == now.tempo
                 && was.cot == now.cot && was.language == now.language && was.vocal_prompt == now.vocal_prompt
-                && was.seed == now.seed && was.cfg_scale == now.cfg_scale && was.temperature == now.temperature
-            if !same { throw ServiceError("Resume preserves the saved song. Keep lyrics, style, score, voice, seed, and sampling unchanged.") }
+            if request.continuing {
+                if !music { throw ServiceError("Extending keeps the take's song. Keep lyrics, style, score, voice and tempo unchanged.") }
+                let written = (try? MusicRender.semanticArtifact(saved).0.count) ?? 0
+                if written >= now.max_tokens { throw ServiceError("Choose a length longer than the take.") }
+            } else {
+                // Rendering again draws the same audio noise from the take's own seed.
+                let same = music && was.seed + request.resume_take - 1 == now.seed && was.cfg_scale == now.cfg_scale
+                    && was.temperature == now.temperature
+                if !same { throw ServiceError("Resume preserves the saved song. Keep lyrics, style, score, voice, seed, and sampling unchanged.") }
+            }
         }
         let forecast = queuedEstimate(request.project, kind: request.kind)
         guard forecast.allowed else { throw ServiceError(forecast.reason) }

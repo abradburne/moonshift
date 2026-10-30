@@ -200,10 +200,15 @@ struct JobRequest: Codable, Equatable {
     var kind: String
     var project: Project
     var source = ""
+    /// A job whose saved song tokens this one starts from, and which of its takes.
     var resume_from = ""
+    var resume_take = 1
+    /// The saved tokens are an opening to write on from, not the whole song.
+    var continuing = false
 
-    init(kind: String, project: Project, source: String = "", resumeFrom: String = "") {
+    init(kind: String, project: Project, source: String = "", resumeFrom: String = "", take: Int = 1, continuing: Bool = false) {
         self.kind = kind; self.project = project; self.source = source; resume_from = resumeFrom
+        resume_take = take; self.continuing = continuing
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -211,15 +216,18 @@ struct JobRequest: Codable, Equatable {
         project = try c.decode(Project.self, forKey: .project)
         source = (try? c.decodeIfPresent(String.self, forKey: .source)) ?? ""
         resume_from = (try? c.decodeIfPresent(String.self, forKey: .resume_from)) ?? ""
+        resume_take = (try? c.decodeIfPresent(Int.self, forKey: .resume_take)) ?? 1
+        continuing = (try? c.decodeIfPresent(Bool.self, forKey: .continuing)) ?? false
     }
 
     /// What a job must ask for before it is queued.
     func validate() throws {
         guard ["generate", "transcribe"].contains(kind) else { throw ServiceError("A job either transcribes a recording or generates a cover.") }
         try project.validate()
-        if !resume_from.isEmpty, kind != "generate" || project.takes != 1 {
+        if !resume_from.isEmpty, kind != "generate" || project.takes != 1 || !(1...8).contains(resume_take) {
             throw ServiceError("Resume saved song tokens as a single music take.")
         }
+        if continuing, resume_from.isEmpty { throw ServiceError("Choose the take to extend.") }
         if kind == "generate" {
             if !project.hasStyle || !project.hasWords { throw ServiceError("Add a musical style and lyrics first.") }
             if !project.abc.trimmed.isEmpty, project.cot == "off" { throw ServiceError("A score needs Melody or Melody and harmony.") }

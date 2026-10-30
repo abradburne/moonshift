@@ -282,6 +282,30 @@ await test("a stopped render with a saved song can resume") {
     check(try library.createJob(JobRequest(kind: "generate", project: rendering, resumeFrom: job.id)).status == "queued")
 }
 
+await test("a take can be extended or rendered again from its saved song") {
+    let library = try temporaryLibrary()
+    var project = song(); project.takes = 2; project.max_tokens = 1500
+    let job = try library.createJob(JobRequest(kind: "generate", project: project))
+    let second = library.folder(of: job.id).appendingPathComponent("take-2")
+    try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+    try Data("[\(Array(repeating: "7", count: 40).joined(separator: ", "))]".utf8).write(to: second.appendingPathComponent("semantic-prefix.json"))
+    library.update(job.id, status: "complete") { _ in }
+    // Writing on may use another seed, guidance or quality, but keeps the words and a longer length.
+    var longer = project; longer.takes = 1; longer.max_tokens = 9000; longer.seed = 77; longer.cfg_scale = 1.5; longer.engine = "metal-q8"
+    check(try library.createJob(JobRequest(kind: "generate", project: longer, resumeFrom: job.id, take: 2, continuing: true)).status == "queued")
+    var reworded = longer; reworded.lyrics = "Other words"
+    checkThrows({ try library.createJob(JobRequest(kind: "generate", project: reworded, resumeFrom: job.id, take: 2, continuing: true)) }, containing: "Extending keeps")
+    var short = longer; short.max_tokens = 32
+    checkThrows({ try library.createJob(JobRequest(kind: "generate", project: short, resumeFrom: job.id, take: 2, continuing: true)) }, containing: "longer than the take")
+    // Rendering the second take again draws on its own seed, one past the job's.
+    var again = project; again.takes = 1; again.engine = "metal-q8"; again.seed = project.seed + 1
+    check(try library.createJob(JobRequest(kind: "generate", project: again, resumeFrom: job.id, take: 2)).status == "queued")
+    var reseeded = again; reseeded.seed = project.seed
+    checkThrows({ try library.createJob(JobRequest(kind: "generate", project: reseeded, resumeFrom: job.id, take: 2)) }, containing: "Resume preserves")
+    checkThrows({ try library.createJob(JobRequest(kind: "generate", project: again, resumeFrom: job.id, take: 3)) }, containing: "no saved song")
+    checkThrows({ try JobRequest(kind: "generate", project: again, continuing: true).validate() }, containing: "Choose the take")
+}
+
 await test("deleting a cover removes its takes and its unshared recording") {
     let library = try temporaryLibrary()
     let source = try imported(library)

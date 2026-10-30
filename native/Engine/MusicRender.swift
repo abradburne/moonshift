@@ -55,14 +55,23 @@ struct MusicRender {
                 options.append(("abc_file", score.path))
             }
 
-            let codes: [Int], meta: [String: Any]
+            var codes: [Int], meta: [String: Any]
             if !request.resume_from.isEmpty {
-                let source = library.folder(of: request.resume_from).appendingPathComponent("take-1")
+                let source = library.folder(of: request.resume_from).appendingPathComponent("take-\(request.resume_take)")
                 (codes, meta) = try Self.semanticArtifact(source.appendingPathComponent("semantic-prefix.json"))
                 if let saved = try? String(contentsOf: source.appendingPathComponent("score.abc"), encoding: .utf8) {
                     try saved.write(to: score, atomically: true, encoding: .utf8)
                 }
-                try write(codes, to: out.appendingPathComponent("semantic.json"))
+                if request.continuing {
+                    // Everything the take sang is kept; the model writes on from its last moment.
+                    let opening = out.appendingPathComponent("opening.json")
+                    try write(codes, to: opening)
+                    try engineRun(base, options + [("stop_after", "semantic"), ("semantic_prefix_file", opening.path)],
+                                  take: take, stage: "Loading the music model", out: out)
+                    (codes, meta) = try Self.semanticArtifact(out.appendingPathComponent("semantic.json"))
+                } else {
+                    try write(codes, to: out.appendingPathComponent("semantic.json"))
+                }
             } else {
                 try engineRun(base, options + [("stop_after", "semantic")], take: take, stage: "Loading the music model", out: out)
                 (codes, meta) = try Self.semanticArtifact(out.appendingPathComponent("semantic.json"))

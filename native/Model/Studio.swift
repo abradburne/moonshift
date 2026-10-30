@@ -620,15 +620,42 @@ import Observation
     /// Renders audio from the song a stopped job already wrote, optionally in
     /// sections, which is steadier on long songs.
     func resume(_ job: Job, inSections: Bool) async {
-        guard job.resumable, !isBusy(job.request.project.id) else { return }
+        guard job.resumable else { return }
         var cover = job.request.project
         cover.takes = 1
         if inSections { cover.nar_chunk_frames = 1024 }
+        await followUp(JobRequest(kind: "generate", project: cover, resumeFrom: job.id), failure: "Rendering could not resume")
+    }
+
+    /// Writes on from where a take stopped, up to a longer length. Everything it
+    /// sang is kept, so the song carries on rather than starting again.
+    func extend(_ track: AudioTrack, of job: Job, to length: CoverLength) async {
+        var cover = job.request.project
+        cover.takes = 1; cover.seed = track.seed; cover.max_tokens = length.rawValue
+        await followUp(JobRequest(kind: "generate", project: cover, resumeFrom: job.id, take: takeNumber(of: track), continuing: true),
+                       failure: "This take could not be extended")
+    }
+
+    /// Renders a take's song again at another quality: the same performance, note for note.
+    func rerender(_ track: AudioTrack, of job: Job, at quality: Quality) async {
+        var cover = job.request.project
+        cover.takes = 1; cover.seed = track.seed; cover.engine = quality.rawValue
+        await followUp(JobRequest(kind: "generate", project: cover, resumeFrom: job.id, take: takeNumber(of: track)),
+                       failure: "This take could not be rendered again")
+    }
+
+    /// Which of its job's takes a track is, from the folder its audio was saved in.
+    private func takeNumber(of track: AudioTrack) -> Int {
+        track.audio.firstMatch(of: #/take-(\d+)\//#).flatMap { Int($0.1) } ?? 1
+    }
+
+    private func followUp(_ request: JobRequest, failure: String) async {
+        guard !isBusy(request.project.id) else { return }
         do {
-            _ = try service.createJob(JobRequest(kind: "generate", project: cover, resumeFrom: job.id))
+            _ = try service.createJob(request)
             await refresh()
         } catch {
-            report(error, title: "Rendering could not resume")
+            report(error, title: failure)
         }
     }
 
