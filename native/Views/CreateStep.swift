@@ -20,6 +20,7 @@ struct CreateStep: View {
             StepHeading(title: "Create the cover")
             summary
             ScoreSection(studio: studio)
+            if let fit = studio.lyricFit { LyricFitSection(studio: studio, fit: fit) }
             if studio.isReady, studio.health != nil, !studio.modelsReady { missingModels }
             if let job = studio.activeJob {
                 JobProgressCard(studio: studio, job: job)
@@ -80,6 +81,32 @@ struct CreateStep: View {
                         Text(studio.project.quality.detail + memoryNote).font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                if let pinned = studio.pinnedSeed {
+                    GridRow {
+                        Text("Seed").foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 10) {
+                                Label("\(pinned.seed) from \(pinned.take)", systemImage: "dice").lineLimit(1)
+                                Button("Use New Seeds") { studio.pinnedSeed = nil }.buttonStyle(.plain).font(.caption).foregroundStyle(Theme.accent)
+                            }
+                            Text(seedNote).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                GridRow {
+                    Text("Guidance").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Picker("Guidance", selection: $studio.project.cfg_scale) {
+                            ForEach(Guidance.allCases) { Text($0.name).tag($0.rawValue) }
+                            if Guidance(rawValue: studio.project.cfg_scale) == nil { Text("Custom").tag(studio.project.cfg_scale) }
+                        }
+                        .pickerStyle(.segmented).labelsHidden().fixedSize()
+                        Text(studio.project.cfg_scale == 1
+                             ? "Turn it up to hold the singer closer to the lyrics and style. Writing then takes about twice as long."
+                             : "Holds the singer closer to the lyrics and style. Writing the arrangement takes about twice as long.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
             HStack(spacing: 14) {
                 // While this cover is being made, its own job is what holds the memory.
@@ -120,6 +147,13 @@ struct CreateStep: View {
         guard duration > 0, let fit = CoverLength.fitting(duration) else { return limit }
         let song = studio.project.tempo == 1 ? "Your song is \(clockText(duration))." : "At this tempo your song runs about \(clockText(duration))."
         return fit.seconds > Double(studio.project.max_tokens) / 25 ? "\(song) \(fit.name) has room for all of it." : "\(song) \(limit)"
+    }
+
+    private var seedNote: String {
+        let length = studio.project.cfg_scale == 1
+            ? "Choose another length to hear the same performance stop sooner or carry on: a Sketch grows into the Full track."
+            : "With guidance on, a different length changes the performance too."
+        return length + " Changing quality, guidance, style, lyrics, score or tempo gives a new performance."
     }
 
     private var memoryNote: String {
@@ -311,6 +345,7 @@ private struct TakeCard: View {
                     Button("Show in Finder", systemImage: "folder") { studio.reveal(track) }
                     Divider()
                     Button("Use This Style Again", systemImage: "arrow.uturn.backward") { studio.reuseSettings(of: job) }.disabled(studio.locked)
+                    Button("Reuse Seed and Settings", systemImage: "dice") { studio.reuseSeed(of: track, in: job) }.disabled(studio.locked)
                     Divider()
                     Button("Delete Take…", systemImage: "trash", role: .destructive) { confirmingDelete = true }
                 } label: {
@@ -339,6 +374,7 @@ private struct TakeCard: View {
         if snapshot.tempo != 1 { parts.append(snapshot.tempoLabel) }
         if let voice = Voice.named(snapshot.voice) { parts.append(voice.name) }
         if let created = job.created { parts.append(created.friendly) }
+        parts.append("Seed \(track.seed)")
         return parts.joined(separator: " · ")
     }
 }
@@ -367,6 +403,38 @@ private struct MelodyPreview: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card(padding: 14)
+    }
+}
+
+/// How the lyrics sit on the score: the sections they follow, and where the
+/// words and the melody disagree, which is where a take tends to skip lines.
+private struct LyricFitSection: View {
+    @Bindable var studio: Studio
+    var fit: LyricFit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Lyrics and score").font(.headline)
+                    Text(summary).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                if !fit.labelled {
+                    Button("Label Sections") { studio.labelSections() }.buttonStyle(.quiet).disabled(studio.locked)
+                }
+            }
+            ForEach(fit.messages.prefix(3), id: \.self) { Callout(text: $0) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card(padding: 16)
+    }
+
+    private var summary: String {
+        let sung = fit.sections.filter { !$0.lines.isEmpty }.map { LyricFit.Section.titled($0.name) }
+        let order = sung.prefix(4).joined(separator: ", ") + (sung.count > 4 ? " and \(sung.count - 4) more" : "")
+        if fit.labelled { return fit.messages.isEmpty ? "The words fit the score: \(order)." : "Some words and melody may not fit." }
+        return "The score sings \(sung.count) sections: \(order). Labelling the lyrics to match helps the singer keep its place. It happens when a take starts, or now."
     }
 }
 

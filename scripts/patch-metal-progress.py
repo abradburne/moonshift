@@ -45,3 +45,16 @@ replace_once(root / "src/models/yue2/nar_runtime.cpp", "moonwire.progress.flow",
 replace_once(root / "src/models/yue2/pipeline.cpp", "moonwire.progress.vae", "            ++tiles;\n", '''            ++tiles;
             engine::debug::timing_log_scalar("moonwire.progress.vae", start + core_frames >= frames ? 1000 : (start + core_frames) * 1000 / frames);
 ''')
+# The first decode cache is always a full chunk, whatever the length limit, so a
+# take with the same seed writes the same song whether it stops at a minute or
+# runs to the end: a different cache size changes the arithmetic, and the song.
+replace_once(root / "src/models/yue2/ar_runtime.cpp", "same seed writes the same song", '''        auto prefill = active_runtime->prefill_tokens_into_decode_cache(
+            start_prefix,
+            cache_steps_for(
+                static_cast<int64_t>(start_prefix.size()),
+                window.max_tokens - static_cast<int64_t>(emitted.size())));''', '''        // Moonshift: the same seed writes the same song at any length limit.
+        auto prefill = active_runtime->prefill_tokens_into_decode_cache(
+            start_prefix,
+            std::max<int64_t>(
+                cache_steps_for(static_cast<int64_t>(start_prefix.size()), window.max_tokens - static_cast<int64_t>(emitted.size())),
+                std::min<int64_t>(static_cast<int64_t>(start_prefix.size()) + kArDecodeChunkTokens, kContextTokens)));''')

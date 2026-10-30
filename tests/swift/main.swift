@@ -31,6 +31,68 @@ await test("empty, oversized and unsafe lyric files are refused") {
     checkThrows({ _ = try LyricFile.parse("<tt><body><p>Unclosed</body></tt>", extension: "ttml") }, containing: "could not be read")
 }
 
+// MARK: Lyrics and score
+
+let sectionedScore = """
+X:1
+M:4/4
+L:1/8
+Q:1/4=120
+V: Vocal clef=treble name="Vocal Melody"
+V: Ins clef=treble name="Ins Melody"
+K:C
+% intro
+V: Vocal
+Z2|
+V: Ins
+"C"C8|C8|
+% verse
+V: Vocal
+"C"cccc cccc|cccc cccc|
+V: Ins
+Z2|
+% chorus
+V: Vocal
+c4-c4|cccc cccc|[ce]ccc cccc|]
+"""
+
+await test("the score's sections count the notes its vocal line begins") {
+    let sections = LyricFit.sections(of: sectionedScore)
+    check(sections.map(\.name) == ["intro", "verse", "chorus"])
+    // A tied note is one note; a chord is one note; the instrument's notes do not count.
+    check(sections.map(\.notes) == [0, 16, 17], "\(sections.map(\.notes))")
+    check(sections.map(\.start) == [0, 4, 8], "\(sections.map(\.start))")
+    check(LyricFit.sections(of: sectionedScore, tempo: 0.5).last?.start == 16)
+    check(LyricFit.sections(of: "X:1\nM:4/4\nK:C\ncdef|]").isEmpty)
+}
+
+await test("lyrics are labelled with the score's sections") {
+    // The blank line inside the chorus is not a section break.
+    let lyrics = "Walking down the road tonight\nLooking for a little light\n\nSing it loud and sing it clear\n\nEveryone is gathered here"
+    let labelled = LyricFit.labelled(lyrics, score: sectionedScore)
+    check(labelled == "[Verse]\nWalking down the road tonight\nLooking for a little light\n\n[Chorus]\nSing it loud and sing it clear\nEveryone is gathered here",
+          labelled ?? "nil")
+    check(LyricFit(lyrics: lyrics, score: sectionedScore)?.problems == [])
+    // Lyrics with their own labels, or a score without sections, are left alone.
+    check(LyricFit.labelled(labelled ?? "", score: sectionedScore) == nil)
+    check(LyricFit.labelled(lyrics, score: "X:1\nK:C\ncdef|]") == nil)
+    check(LyricFit.Section.titled("pre-chorus") == "Pre-Chorus")
+}
+
+await test("a section with more words than notes is pointed out") {
+    let lyrics = "Walking down the road tonight\nLooking for a little light\n\n" + Array(repeating: "Sing it loud and sing it clear", count: 5).joined(separator: "\n")
+    let fit = LyricFit(lyrics: lyrics, score: sectionedScore, tempo: 0.5)
+    check(fit?.problems.contains(.crowded(section: 2)) == true, "\(fit?.problems ?? [])")
+    check(fit?.messages.contains { $0.hasPrefix("Chorus at 0:16 has") && $0.hasSuffix("17 notes. Lines there may be rushed or skipped.") } == true,
+          "\(fit?.messages ?? [])")
+}
+
+await test("syllables are counted in English and Japanese") {
+    check(LyricFit.syllables("Close your eyes and count to three") == 7)
+    check(LyricFit.syllables("My heart beats like a drum (all night)") == 6)
+    check(LyricFit.syllables("こんにちは きょう") == 7)
+}
+
 // MARK: Song details
 
 await test("titles come from tags, then from the filename") {
@@ -80,6 +142,10 @@ await test("estimates follow length, guidance and precision") {
     check(estimator.estimate(eight, memory: memory).peak_high_gib == one.peak_high_gib)
     check(estimator.estimate(guided, memory: memory).cache_gib > one.cache_gib * 1.9)
     check(estimator.estimate(small, memory: memory).peak_high_gib < one.peak_high_gib)
+    // A sketch holds a full first chunk of cache, as long a song would.
+    var sketch = project; sketch.max_tokens = 1500
+    var chunk = project; chunk.max_tokens = 5120
+    check(estimator.estimate(sketch, memory: memory).cache_gib == estimator.estimate(chunk, memory: memory).cache_gib)
     var tight = memory; tight.limit_gib = 8
     let constrained = estimator.estimate(project, memory: tight)
     check(!constrained.allowed && constrained.reason.contains("memory limit"))

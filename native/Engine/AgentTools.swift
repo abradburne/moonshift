@@ -28,7 +28,9 @@ struct AgentTools {
 
     Keep the score valid ABC: keep the header fields (X, M, L, Q, K) and voice
     lines, and change notes, chords in quotes, or the Q tempo. Section labels in
-    lyrics look like [Verse] and [Chorus].
+    lyrics look like [Verse] and [Chorus], one for each `% section` comment in the
+    score that has words. Lyrics without labels are given the score's when a take
+    starts.
     """
 
     // MARK: Tools
@@ -197,6 +199,8 @@ struct AgentTools {
             "score": score, "score_source": origin, "jobs": owned.map(describe),
         ]) { $1 }
         if origin == "none" { summary["note"] = "This cover has no score yet. Call transcribe, wait for it to complete, then create_take." }
+        // Where the words and the score's melody disagree, which is where takes skip lines.
+        if let fit = LyricFit(lyrics: cover.lyrics, score: score, tempo: cover.tempo) { summary["lyric_fit"] = fit.messages }
         return summary
     }
 
@@ -289,6 +293,7 @@ struct AgentTools {
             }
             cover.abc = score
             cover.cover_job = job
+            if let labelled = LyricFit.labelled(cover.lyrics, score: score) { cover.lyrics = labelled }
             // A new seed, so the same settings give a new performance.
             cover.seed = Int.random(in: 1..<2_000_000_000)
             let saved = try library.save(cover)

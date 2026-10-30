@@ -41,6 +41,13 @@ import Observation
     private(set) var submitting = false
     /// Takes that finished since the app opened and have not been played.
     private(set) var unheard: Set<String> = []
+    /// A take's seed that the next takes of this cover reuse, instead of a new one each.
+    var pinnedSeed: PinnedSeed?
+
+    struct PinnedSeed: Equatable {
+        var seed: Int
+        var take: String
+    }
 
     // Song details and optional online lookup, for the open cover.
     var onlineLookup = false {
@@ -430,6 +437,7 @@ import Observation
 
     private func load(_ target: Project) {
         resetLookup()
+        pinnedSeed = nil
         saved = target
         project = target
         estimate = nil
@@ -506,13 +514,14 @@ import Observation
         guard canCreate else { return }
         submitting = true
         defer { submitting = false }
-        // A new seed for each take; otherwise identical settings repeat the same performance.
-        project.seed = Int.random(in: 1..<2_000_000_000)
+        // A new seed for each take, unless one is pinned: identical settings and seed repeat the same performance.
+        project.seed = pinnedSeed?.seed ?? Int.random(in: 1..<2_000_000_000)
         guard await save() else { return }
         let snapshot = project
         let transcription = transcription(of: snapshot.cover_source)
         if transcription != nil || snapshot.hasEditedScore {
-            await generate(snapshot, from: transcription)
+            // A pinned seed repeats a take, so its words stay exactly as they were.
+            await generate(snapshot, from: transcription, labelling: pinnedSeed == nil)
         } else if let job = await submit(JobRequest(kind: "transcribe", project: snapshot, source: snapshot.cover_source)) {
             // An agent or another cover of this song may already be listening to it: this waits for that.
             chains.append((job.id, snapshot))
@@ -533,6 +542,15 @@ import Observation
         if project.hasEditedScore { return project.abc }
         let heard = transcription(of: project.cover_source)?.result
         return (project.keepsHarmony ? heard?.full_abc : heard?.abc) ?? ""
+    }
+
+    /// How the lyrics sit on the score a take would use, at the cover's tempo.
+    var lyricFit: LyricFit? { LyricFit(lyrics: project.lyrics, score: score, tempo: project.tempo) }
+
+    /// Labels the lyrics with the score's sections now, rather than when the next take starts.
+    func labelSections() {
+        guard !locked, let labelled = LyricFit.labelled(project.lyrics, score: score) else { return }
+        project.lyrics = labelled
     }
 
     /// Typing in the score makes it this cover's own; clearing it, or typing it back, returns to the original.
@@ -563,7 +581,7 @@ import Observation
     }
 
     /// Queues the music job with the score heard in the reference song.
-    private func generate(_ snapshot: Project, from transcription: Job?, resuming: Job? = nil) async {
+    private func generate(_ snapshot: Project, from transcription: Job?, resuming: Job? = nil, labelling: Bool = true) async {
         var cover = snapshot
         // A score edited by hand or by an agent is rendered as written.
         if !cover.hasEditedScore {
@@ -576,9 +594,12 @@ import Observation
         } else if cover.cover_job.isEmpty {
             cover.cover_job = transcription?.id ?? "edited"
         }
+        // Unlabelled lyrics take the score's sections, which helps the singer keep its place.
+        if resuming == nil, labelling, let labelled = LyricFit.labelled(cover.lyrics, score: cover.abc) { cover.lyrics = labelled }
         if cover.id == project.id {
-            // The saved cover records which score it was made from.
+            // The saved cover records which score and words it was made from.
             project.abc = cover.abc
+            project.lyrics = cover.lyrics
             project.cover_job = cover.cover_job
             guard await save() else { return }
         }
@@ -631,11 +652,26 @@ import Observation
         }
     }
 
+    /// Brings back everything a take's performance came from, and pins its seed,
+    /// so the next take repeats it: at another length, the same song grows or stops sooner.
+    func reuseSeed(of track: AudioTrack, in job: Job) {
+        let source = job.request.project
+        project.lyrics = source.lyrics; project.style = source.style; project.voice = source.voice
+        project.vocal_prompt = source.vocal_prompt; project.cover_preset = source.cover_preset; project.language = source.language
+        project.cot = source.cot; project.tempo = source.tempo; project.cfg_scale = source.cfg_scale
+        project.temperature = source.temperature; project.engine = source.engine; project.ode_steps = source.ode_steps
+        editScore(source.abc)
+        let made = job.created.map { " · " + $0.friendly } ?? ""
+        pinnedSeed = PinnedSeed(seed: track.seed, take: "\(job.request.project.cover_preset.isEmpty ? track.name : job.request.project.cover_preset)\(made)")
+        step = .create
+    }
+
     /// Brings a take's style and singer back into the editor.
     func reuseSettings(of job: Job) {
         let source = job.request.project
         project.style = source.style; project.voice = source.voice; project.vocal_prompt = source.vocal_prompt
         project.cover_preset = source.cover_preset; project.cot = source.cot; project.language = source.language; project.tempo = source.tempo
+        project.cfg_scale = source.cfg_scale
         step = .style
     }
 

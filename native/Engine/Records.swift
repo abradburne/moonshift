@@ -160,6 +160,20 @@ enum CoverLength: Int, CaseIterable, Identifiable {
     }
 }
 
+/// Classifier-free guidance: how strongly the music model is held to the lyrics
+/// and style. Above 1 it runs twice per step, so writing takes about twice as long.
+enum Guidance: Double, CaseIterable, Identifiable {
+    case off = 1, light = 1.2, strong = 1.5
+    var id: Double { rawValue }
+    var name: String {
+        switch self {
+        case .off: "Off"
+        case .light: "Light"
+        case .strong: "Strong"
+        }
+    }
+}
+
 struct AudioTrack: Codable, Identifiable, Equatable {
     var id: String { audio }
     var name: String

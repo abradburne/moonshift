@@ -30,8 +30,10 @@ struct Estimator {
         let planning = project.cot != "off" && project.abc.trimmed.isEmpty ? 4096 : 256
         let prefix = Int(Double(text.utf8.count) / 3) + planning
         let branches = project.cfg_scale == 1 ? 1.0 : 2.0
+        // Without guidance the first cache is always a full 5120-token chunk, so a short song costs as much as one.
+        let cached = branches == 1 ? max(budget, 5120) : budget
         // 28 layers * 8 KV heads * 128 dimensions * K+V * fp16 bytes.
-        let cache = Double(prefix + budget) * 114688 * branches / Machine.gib
+        let cache = Double(prefix + cached) * 114688 * branches / Machine.gib
         let low: Double, high: Double, label: String
         if kind == "transcribe" {
             // CPU FP32 transcription measured 2.38 GB; retain room for longer songs.
